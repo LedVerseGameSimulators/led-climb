@@ -47,41 +47,37 @@ class GameBridge:
         print(f"✓ Client disconnected. Total: {len(self.active_connections)}")
 
     async def broadcast_state(self, game_state: dict):
-        """Send game state to all connected clients in simulator format"""
+        """Send game state to clients. Climb = SQUARE grid, SINGLE RGB per cell."""
         if not self.active_connections:
             return
 
-        # Use real LED display from game state, or fallback to empty grid.
-        # Each cell = 3 ring colors [[R,G,B],[R,G,B],[R,G,B]] (outer,mid,inner).
+        # Climb: led_display is flat list of [R,G,B] single colors.
+        # Grid dims come from the API (6x33 for Climb); default to those.
         led_display = game_state.get("led_display", [])
+        rows = int(game_state.get("grid_rows", 6))
+        cols = int(game_state.get("grid_cols", 33))
 
-        def _empty_tile():
-            return [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+        def _rgb(cell):
+            if isinstance(cell, (list, tuple)) and len(cell) >= 3:
+                # single [r,g,b]
+                if not isinstance(cell[0], (list, tuple)):
+                    return [int(cell[0]), int(cell[1]), int(cell[2])]
+                # legacy 3-ring -> take middle ring
+                mid = cell[1] if len(cell) > 1 else cell[0]
+                return [int(mid[0]), int(mid[1]), int(mid[2])]
+            return [0, 0, 0]
 
-        if led_display and len(led_display) == 416:  # 16 * 26 = 416
-            grid = []
-            for i in range(16):
-                row = []
-                for j in range(26):
-                    cell = led_display[i * 26 + j]
-                    # 3-ring cell: list of 3 rgb triples
-                    if (isinstance(cell, (list, tuple)) and len(cell) >= 3
-                            and isinstance(cell[0], (list, tuple))):
-                        row.append([list(cell[0]), list(cell[1]), list(cell[2])])
-                    # flat rgb -> broadcast to 3 rings
-                    elif isinstance(cell, (list, tuple)) and len(cell) >= 3:
-                        rgb = list(cell[:3])
-                        row.append([rgb, rgb, rgb])
-                    else:
-                        row.append(_empty_tile())
-                grid.append(row)
+        grid = []
+        if led_display and len(led_display) == rows * cols:
+            for i in range(rows):
+                grid.append([_rgb(led_display[i * cols + j]) for j in range(cols)])
         else:
-            grid = [[_empty_tile() for _ in range(26)] for _ in range(16)]
+            grid = [[[0, 0, 0] for _ in range(cols)] for _ in range(rows)]
 
         msg = json.dumps({
             "type": "frame",
-            "rows": 16,
-            "cols": 26,
+            "rows": rows,
+            "cols": cols,
             "grid": grid,
             "fps": 60,
             "game_id": self.current_game_id

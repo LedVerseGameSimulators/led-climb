@@ -20,8 +20,8 @@ const S = {
 export default function App() {
   const [screen, setScreen] = useState(S.GAME_SELECT)
   const [gameConfig, setGameConfig] = useState({
-    game: 'led_hex',
-    level: '17',
+    game: 'climb',
+    level: 'A001',
     playerCount: 1,
     difficulty: 'normal',
     cardId: '',
@@ -83,7 +83,7 @@ export default function App() {
 
   const handleLogout = () => {
     setResult(null)
-    setGameConfig({ game: 'led_hex', level: '17', playerCount: 1,
+    setGameConfig({ game: 'climb', level: 'A001', playerCount: 1,
                    difficulty: 'normal', cardId: '', cardId2: '' })
     setScreen(S.GAME_SELECT)
   }

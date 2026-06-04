@@ -116,6 +116,8 @@ _SETTINGS_DEFAULTS = {
     "leval_span": 0.9,         # leval_span_sw  (speed span)
     "tread_red_time": 0.01,    # debug: secs on red before life loss
     "life_value_count_time": 1.2,  # debug: min secs between life losses
+    "grid_rows": 6,            # value_high  — Climb is 6 rows
+    "grid_cols": 33,           # value_width — Climb is 33 cols (SQUARE grid)
 }
 
 _settings_cache = None
@@ -141,6 +143,12 @@ def load_real_settings() -> dict:
             ls = db.get("leval_span_sw")
             if ls is not None:
                 s["leval_span"] = float(ls)
+            vh = db.get("value_high")
+            if vh is not None:
+                s["grid_rows"] = int(float(vh))
+            vw = db.get("value_width")
+            if vw is not None:
+                s["grid_cols"] = int(float(vw))
         finally:
             db.close()
     except Exception as e:
@@ -506,10 +514,10 @@ class GameInstance:
 
     def _consume_cell(self, i, j):
         """Remove a stepped goal tile from its group(s) so it blanks.
-        2P (.ledb multiplayer): respawns after respawn_delay.
-        1P: follows native level timing — groups with staggered start_times
-        provide natural wave progression; no artificial respawn."""
-        reappear_at = time.time() + self.respawn_delay if self.multiplayer else None
+        No artificial respawn — consumed = gone (matches real game). Level
+        completes when all scoreable tiles cleared. Time-staggered waves
+        (groups with later start_times) provide natural progression."""
+        reappear_at = None  # respawn disabled — clear progression for 1P + 2P
         if self.dict_group:
             for g in self.dict_group.values():
                 sm = getattr(g, "start_member", None)
@@ -650,8 +658,11 @@ class GameManager:
 
                 # Initialize game components — always use HeadlessLedTable
                 # (never the mocked gui2 LedTable — that's MagicMock, comparisons fail)
-                led_table = HeadlessLedTable(wall_light_arr_len=100, led_row=16, led_col=26)
-                logger.debug(f"HeadlessLedTable ready: {led_table.led_row}x{led_table.led_col}")
+                _s = load_real_settings()
+                _rows = _s.get("grid_rows", 6)
+                _cols = _s.get("grid_cols", 33)
+                led_table = HeadlessLedTable(wall_light_arr_len=100, led_row=_rows, led_col=_cols)
+                logger.info(f"HeadlessLedTable ready: {led_table.led_row}x{led_table.led_col} (Climb square grid)")
 
                 # Create mock settings object with required attributes
                 # Climb's Play.__init__ expects setting.leval_span.get(), setting.blue_hide_max_time.get(), etc.
@@ -783,15 +794,24 @@ class GameManager:
                         logger.info(f"Play zone: {game.zone}")
                     except Exception:
                         game.zone = None
-                # Set multiplayer EAGERLY from dict_group so _consume_cell
-                # schedules respawn even if press arrives before first callback frame.
-                if dict_group and Setting is not None:
-                    game.multiplayer = any(
-                        getattr(g, "type", None) == Setting.SCREEN_LIGHT
-                        for g in dict_group.values()
-                    )
+                # Multiplayer detection: 2P levels (DK series) have BOTH blue (P1)
+                # and orange (P2) scoreable groups. DK levels are ALL floor_light
+                # (no SCREEN_LIGHT), so detect by color presence instead.
+                # NOTE: game.multiplayer may already be True from create_game()
+                # (.ledb extension) — only upgrade to True, never override to False.
+                if dict_group:
+                    _P1 = (0, 0, 254)      # blue
+                    _P2 = (254, 128, 0)    # orange
+                    has_p1 = has_p2 = False
+                    for g in dict_group.values():
+                        mc = _group_main_color(g.color)
+                        if mc == _P1: has_p1 = True
+                        elif mc == _P2: has_p2 = True
+                    if has_p1 and has_p2:
+                        game.multiplayer = True
                     if game.multiplayer:
-                        logger.info(f"Multiplayer level detected: {level_id}")
+                        logger.info(f"Multiplayer level detected: {level_id} "
+                                    f"(blue={has_p1}, orange={has_p2})")
 
                 game_start_time = time.time()
 
@@ -900,9 +920,61 @@ class GameManager:
                         game.red_cells   = red_cells
                         game.deduct_cells = deduct_cells
 
+                        # ── LEVEL COMPLETION ─────────────────────────────────
+                        # Count scoreable tiles remaining across ALL groups
+                        # (active + future waves). When all consumed → complete.
+                        # Scoreable: PLUS_ARR (1P) or blue+orange (2P). Green/red
+                        # /deduct are NEVER scoreable so don't block completion.
+                        _scoreable_colors = ({_P1_COLOR, _P2_COLOR} if game.multiplayer
+                                             else set(_CLIMB_COLOR_ARR))
+                        remaining_scoreable = 0
+                        for g in dgroup.values():
+                            if getattr(g, "type", None) != Setting.FLOOR_LIGHT:
+                                continue
+                            mc = _group_main_color(g.color)
+                            if mc in _scoreable_colors:
+                                sm = getattr(g, "start_member", None)
+                                if sm:
+                                    remaining_scoreable += len(sm)
+                        # Grace period (>1.5s) so level has time to spawn first wave.
+                        if total_pass > 1.5 and remaining_scoreable == 0:
+                            logger.info(f"Level complete: all scoreable tiles cleared "
+                                        f"(score={game.score}, score2={game.score2})")
+                            game.update_state(game_over_reason="completed", result=1,
+                                              score=game.score, score2=game.score2,
+                                              life=game.life)
+                            return False
+
+                        # AUTO-JUMP: scoreable remain but none active NOW (current
+                        # wave cleared, next wave is in the future). Skip dead time
+                        # by advancing total_pass to the next scoreable wave's start.
+                        # Mirrors real game's running_by_blue auto-jump.
+                        if total_pass > 1.5 and remaining_scoreable > 0 \
+                                and not goal_cells and not goal2_cells:
+                            next_start = None
+                            for g in dgroup.values():
+                                if getattr(g, "type", None) != Setting.FLOOR_LIGHT:
+                                    continue
+                                mc = _group_main_color(g.color)
+                                if mc not in _scoreable_colors:
+                                    continue
+                                sm = getattr(g, "start_member", None)
+                                if not sm:
+                                    continue
+                                st = g.start_time_sec
+                                if st > total_pass and (next_start is None or st < next_start):
+                                    next_start = st
+                            if next_start is not None:
+                                logger.debug(f"Auto-jump: {total_pass:.1f}s -> {next_start:.1f}s")
+                                play_self.total_pass = next_start
+                                game.last_life_loss_time = 0.0  # reset hazard gate
+
                         # DEBUG: log tile classification every 60 frames
                         if frame_counter["n"] % 60 == 0:
-                            logger.debug(f"Frame {frame_counter['n']}: goal={len(goal_cells)}, red={len(red_cells)}, deduct={len(deduct_cells)}")
+                            logger.debug(f"Frame {frame_counter['n']}: goal={len(goal_cells)}, "
+                                         f"goal2={len(goal2_cells)}, red={len(red_cells)}, "
+                                         f"deduct={len(deduct_cells)}, remaining_scoreable={remaining_scoreable}, "
+                                         f"mp={game.multiplayer}")
 
                         # 2) SCORE pressed cells (type-aware). Drop scored marks
                         #    for goals that are no longer active so they can score
@@ -921,16 +993,20 @@ class GameManager:
                                     if state[i][j]:
                                         game.try_score_cell(i, j)
 
-                        # 2) Build a SEPARATE display buffer (don't touch led_table).
-                        led_display = [_normalize_rings(cell)
-                                       for row in grid for cell in row]
+                        # 2) Build display buffer — SINGLE RGB per cell (Climb format).
+                        #    Climb tiles are single-color squares, NOT 3-ring hexagons.
+                        #    led_table[r][c] is already [R,G,B] written by Play.update().
                         cols = led_table.led_col
+                        led_display = []
+                        for row in grid:
+                            for cell in row:
+                                if isinstance(cell, (list, tuple)) and len(cell) >= 3 \
+                                        and not isinstance(cell[0], (list, tuple)):
+                                    led_display.append([int(cell[0]), int(cell[1]), int(cell[2])])
+                                else:
+                                    led_display.append([0, 0, 0])
 
-                        # 2a) PULSE: shimmer goal-color tiles between 60-100%
-                        #     brightness using a sin-wave (1s period).
-                        #     LedGroup.breath() oscillates to 0 making tiles
-                        #     invisible — replaced with this approach.
-                        #     Decor tiles remain static (no pulse).
+                        # 2a) PULSE: shimmer goal-color tiles between 60-100% brightness.
                         import math as _math
                         pulse = 0.60 + 0.40 * (0.5 + 0.5 * _math.sin(total_pass * _math.pi * 2))
                         goal_cs = {_P1_COLOR, _P2_COLOR} if game.multiplayer else set(_CLIMB_COLOR_ARR)
@@ -944,11 +1020,7 @@ class GameManager:
                                 mc = _group_main_color(g.color)
                                 if mc not in goal_cs:
                                     continue
-                                orig_rings = (g.color
-                                              if isinstance(g.color[0], (list, tuple))
-                                              else [g.color] * 3)
-                                bc = [[int(ch * pulse) for ch in ring]
-                                      for ring in orig_rings]
+                                bc = [int(ch * pulse) for ch in mc]
                                 for cell in sm:
                                     ci = round(cell[0]); cj = round(cell[1])
                                     if 0 <= ci < led_table.led_row and 0 <= cj < cols:
@@ -965,8 +1037,7 @@ class GameManager:
                                 continue
                             fi, fj = cell
                             on = int(el / 0.1) % 2 == 0
-                            col = [255, 255, 255] if on else [0, 0, 0]
-                            led_display[fi * cols + fj] = [col[:], col[:], col[:]]
+                            led_display[fi * cols + fj] = [255, 255, 255] if on else [0, 0, 0]
 
                         game.update_state(
                             score=game.score,
@@ -977,6 +1048,8 @@ class GameManager:
                             life=game.life,
                             game_over=False,
                             led_display=led_display,
+                            grid_rows=led_table.led_row,
+                            grid_cols=led_table.led_col,
                         )
 
                         frame_counter["n"] += 1
