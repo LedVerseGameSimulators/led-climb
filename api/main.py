@@ -9,7 +9,7 @@ import json
 from loguru import logger
 import datetime
 
-from .config import API_HOST, API_PORT, API_DEBUG, GAME_NAME
+from .config import API_HOST, API_PORT, API_DEBUG, GAME_NAME, GAMES_ROOT
 from .models import (
     LoginRequest, LoginResponse, PlayerInfo,
     StartGameRequest, StartGameResponse,
@@ -39,7 +39,13 @@ app.add_middleware(
 )
 
 # Get singletons
-db = get_db()
+# Database may fail if MySQL not configured; continue for headless testing
+try:
+    db = get_db()
+except Exception as e:
+    logger.warning(f"Database init failed (OK for headless testing): {e}")
+    db = None
+
 game_manager = get_manager()
 
 
@@ -90,8 +96,8 @@ async def start_game(request: StartGameRequest) -> StartGameResponse:
     logger.info(f"Start game request: card={request.card_id}, level={request.level}")
 
     try:
-        # Check session remaining time (60-min timer)
-        time_left = db.check_session_remaining(request.card_id)
+        # Check session remaining time (60-min timer) - skip if no DB
+        time_left = db.check_session_remaining(request.card_id) if db else None
         if time_left is not None and time_left <= 0:
             logger.warning(f"Session expired for card: {request.card_id}")
             return StartGameResponse(
@@ -273,7 +279,8 @@ async def get_game_settings():
             "max_score": 1000
         }
 
-        db.close()
+        if db:
+            db.close()
         return settings
     except Exception as e:
         logger.warning(f"Could not load settings: {e}, using defaults")
@@ -289,30 +296,28 @@ async def get_game_settings():
 # ============= GAME LEVELS ENDPOINT =============
 @app.get("/levels")
 async def get_levels():
-    """All levels grouped into 4 categories. Fast — no shelve scan (dir+ext only).
+    """Climb levels grouped by series.
 
     Categories:
-      extra    - Extra/*.led       (1P, test levels 17-26)
-      basic    - source/---/*.ledb (2P, DK/YCDK series)
-      advanced - source/--/*.led   (1P, YC series)
-      pro      - source/-/*.led    (1P, 00-16 large)
+      a-series  - source/-/*.led   (1P, A001-A025)
+      b-series  - source/--/*.led  (1P, B01-B31 + challenge)
+      dk-series - source/---/*.ledb (2P, DK01-DK10)
     """
     import os, glob as _glob
 
-    clone = "/Users/apple/parallel-work/ledhexagon_clone"
+    src = str(GAMES_ROOT)
 
     BUCKETS = [
-        ("extra",    os.path.join(clone, "Extra", "*.led"),          False, "led"),
-        ("basic",    os.path.join(clone, "source", "---", "*.ledb"), True,  "ledb"),
-        ("advanced", os.path.join(clone, "source", "--", "*.led"),   False, "led"),
-        ("pro",      os.path.join(clone, "source", "-", "*.led"),    False, "led"),
+        ("a-series",  os.path.join(src, "source", "-",   "*.led"),  False, "led"),
+        ("b-series",  os.path.join(src, "source", "--",  "*.led"),  False, "led"),
+        ("dk-series", os.path.join(src, "source", "---", "*.ledb"), True,  "ledb"),
     ]
 
     levels = []
     for bucket, pattern, multiplayer, ftype in BUCKETS:
         for f in sorted(_glob.glob(pattern)):
             stem = os.path.basename(f).rsplit(".", 1)[0]
-            display = f"Level {stem}" if stem.isdigit() else stem
+            display = stem  # A001, B01, DK01 etc — names are already meaningful
             levels.append({
                 "id":          stem,
                 "name":        display,
@@ -452,7 +457,8 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     logger.info("API shutting down")
-    db.close()
+    if db:
+        db.close()
 
 
 # ============= RUN =============

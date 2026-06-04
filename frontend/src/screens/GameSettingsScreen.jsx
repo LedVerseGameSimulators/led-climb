@@ -3,10 +3,9 @@ import { useState, useEffect } from 'react'
 const API_URL = 'http://localhost:8000'
 
 const CAT_LABEL = {
-  extra:    { label: 'Extra',    desc: '10 test levels' },
-  basic:    { label: 'Basic',    desc: 'DK series (2P)' },
-  advanced: { label: 'Advanced', desc: 'YC series' },
-  pro:      { label: 'Pro',      desc: 'Large levels' },
+  'a-series': { label: 'A-Series', desc: 'A001-A025 (1P)' },
+  'b-series': { label: 'B-Series', desc: 'B01-B31 (1P)' },
+  'dk-series': { label: 'DK-Series', desc: 'DK01-DK10 (2P)' },
 }
 
 const DIFFICULTIES = ['easy', 'normal', 'hard']
@@ -14,7 +13,7 @@ const DIFFICULTIES = ['easy', 'normal', 'hard']
 export default function GameSettingsScreen({ game, onConfirm, onBack }) {
   const [categories, setCategories] = useState({})
   const [playerCount, setPlayerCount] = useState(1)
-  const [category, setCategory]       = useState('extra')
+  const [category, setCategory]       = useState('a-series')
   const [level, setLevel]             = useState('')
   const [difficulty, setDifficulty]   = useState('normal')
   const [loading, setLoading]         = useState(true)
@@ -25,8 +24,8 @@ export default function GameSettingsScreen({ game, onConfirm, onBack }) {
       .then(d => {
         if (d.success) {
           setCategories(d.categories || {})
-          // default: extra → first level
-          const first = (d.categories?.extra || [])[0]
+          // default: a-series → first level
+          const first = (d.categories?.['a-series'] || [])[0]
           if (first) setLevel(first.id)
         }
       })
@@ -41,10 +40,10 @@ export default function GameSettingsScreen({ game, onConfirm, onBack }) {
     if (lvls.length) setLevel(lvls[0].id)
   }
 
-  // When player count changes, switch to basic (2P) or extra (1P)
+  // When player count changes, switch to dk-series (2P) or a-series (1P)
   const handlePlayerCount = (n) => {
     setPlayerCount(n)
-    const defaultCat = n === 2 ? 'basic' : 'extra'
+    const defaultCat = n === 2 ? 'dk-series' : 'a-series'
     setCategory(defaultCat)
     const lvls = filteredLevels(defaultCat, n)
     if (lvls.length) setLevel(lvls[0].id)

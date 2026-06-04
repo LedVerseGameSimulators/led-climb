@@ -24,7 +24,7 @@ class Database:
     """Wrapper around game's db_operation.py"""
 
     def __init__(self):
-        self.db_op = DBOperation()
+        self.db_op = DBOperation('localhost')  # Climb decompiled version needs ip_address arg
         self._scores_lock = threading.Lock()
         self._ensure_scores_table()
         logger.info(f"Database connected to {DB_NAME}")

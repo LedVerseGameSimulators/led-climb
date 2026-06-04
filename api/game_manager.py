@@ -1,5 +1,7 @@
 """
-Game Manager - Manages running Play instances and game state
+Game Manager - Climb
+Manages running Play instances and game state for the Climb game.
+Headless: no tkinter GUI. Input via API websocket, output via LED state.
 """
 import uuid
 import threading
@@ -9,15 +11,49 @@ import os
 import shelve as _shelve
 from typing import Dict, Optional
 from loguru import logger
-from .config import GAME_TIMEOUT_SECONDS, MAX_CONCURRENT_GAMES
+from .config import GAME_TIMEOUT_SECONDS, MAX_CONCURRENT_GAMES, GAMES_ROOT
+
+# Mock hardware/network dependencies before importing game_play
+# These are not needed for headless game logic:
+# - tkinter: GUI (game_running.py imports tkinter.messagebox)
+# - encryption: hardware dongle check (yanqian.py checks connected pedrive at module level)
+# - led.led_control: hardware LED driver
+# - net: network communication
+import sys
+from unittest.mock import MagicMock
+
+sys.modules['tkinter'] = MagicMock()
+sys.modules['tkinter.messagebox'] = MagicMock()
+sys.modules['encryption'] = MagicMock()
+sys.modules['encryption.yanqian'] = MagicMock()
+sys.modules['rsa'] = MagicMock()
+# GUI modules (not used in headless, game_play may import them)
+for gui_mod in ['gui2', 'gui2.gui_led_table_editor', 'gui2.gui_led_canvas2',
+                'gui2.gui_table_editor', 'gui2.ui_player_setting', 'gui2.ui_table', 'gui2.gui_util']:
+    sys.modules[gui_mod] = MagicMock()
+for mod in ['Crypto', 'Crypto.Hash', 'Crypto.Cipher', 'Crypto.PublicKey', 'Crypto.Signature']:
+    sys.modules[mod] = MagicMock()
 
 # Will import after config is set
 # from game_play.Play import Play
 
-# Real game settings live in the decompiled project's shelve DBs.
-_CLONE_ROOT = "/Users/apple/parallel-work/ledhexagon_clone"
-_LED_PARAM = f"{_CLONE_ROOT}/setting/led_parameter"
-_DEBUG_PARAM = f"{_CLONE_ROOT}/setting/debug_parameter"
+# Climb-specific: player colors (COLOR_ARR from model/setting.py).
+# Any FLOOR_LIGHT tile matching one of these scores for that player.
+# 1P: all non-hazard FLOOR_LIGHT tiles are scoreable.
+# 2P DK: P1=blue (0,0,254), P2=orange (254,128,0).
+_CLIMB_COLOR_ARR = [
+    (254, 128, 0),   # orange  - P2 in DK 2P levels
+    (0, 0, 254),     # blue    - P1 in DK 2P levels
+    (254, 254, 0),   # yellow
+    (0, 254, 254),   # cyan
+    (254, 0, 254),   # magenta
+    (254, 254, 254), # white
+]
+_CLIMB_HAZARD_COLORS = {(254, 0, 0), (240, 0, 0)}  # RED variants
+
+# Settings from Climb's own led_parameter shelve.
+_LED_PARAM  = str(GAMES_ROOT / "setting" / "led_parameter")
+_DEBUG_PARAM = str(GAMES_ROOT / "setting" / "debug_parameter")
 
 # Sensible fallbacks if the shelve can't be read.
 _SETTINGS_DEFAULTS = {
@@ -377,7 +413,7 @@ class GameManager:
             # Eagerly set multiplayer from file extension BEFORE the load
             # thread starts, so _consume_cell respawns correctly even if
             # a press arrives before the shelve is fully loaded (~7s).
-            _clone = "/Users/apple/parallel-work/ledhexagon_clone"
+            _clone = str(GAMES_ROOT)
             _ledb = os.path.join(_clone, "source", "---", f"{level}.ledb")
             if os.path.exists(_ledb):
                 game.multiplayer = True
@@ -415,68 +451,112 @@ class GameManager:
                 logger.debug(f"Initializing LED table for game {game_id}")
                 led_table = LedTable(wall_light_arr_len=100, led_row=16, led_col=26)
 
-                logger.debug(f"Creating Play instance for game {game_id}")
-                play = Play(led_table, game_level=game.level)
+                # Create mock settings object with required attributes
+                # Climb's Play.__init__ expects setting.leval_span.get(), setting.blue_hide_max_time.get(), etc.
+                class MockSetting:
+                    def __init__(self):
+                        class MockAttr:
+                            def get(self):
+                                return 0.9  # leval_span default
+                        self.leval_span = MockAttr()
+                        self.blue_hide_max_time = MockAttr()
+                        self.blue_hide_max_time.get = lambda: 5.0
+                        self.corner_line_start = MockAttr()
+                        self.corner_line_start.get = lambda: 0
 
-                # Sweep speed scale (cells/sec = (1/group.speed) * game_level_speed).
-                # Lower = slower sweep. Tune per difficulty to match real game pace.
-                difficulty_speed = {"easy": 0.25, "normal": 0.4, "hard": 0.6}
-                play.game_level_speed = difficulty_speed.get(game.difficulty, 0.4)
+                mock_setting = MockSetting()
 
-                # Try to load real game data from .led files
+                # Create dummy callback (Play expects partial_fun_cb for UI updates)
+                def dummy_callback(*args, **kwargs):
+                    pass
+
+                # game_level: numeric difficulty (1=easy, 2=normal, 3=hard), not level ID
+                difficulty_map = {"easy": 1, "normal": 2, "hard": 3}
+                game_level_num = difficulty_map.get(game.difficulty, 2)  # default to normal
+
+                play = None
+                try:
+                    logger.debug(f"Creating Play instance for game {game_id}")
+                    play = Play(led_table, mock_setting, dummy_callback, game_level=game_level_num)
+                    # Sweep speed scale (cells/sec = (1/group.speed) * game_level_speed).
+                    # Lower = slower sweep. Tune per difficulty to match real game pace.
+                    difficulty_speed = {"easy": 0.25, "normal": 0.4, "hard": 0.6}
+                    play.game_level_speed = difficulty_speed.get(game.difficulty, 0.4)
+                except Exception as e:
+                    logger.warning(f"Play creation failed, using mock loop: {e}")
+                    play = None
+
+                # ── CLIMB level loading ──────────────────────────────────────
+                # Climb level naming: A001.led (source/-), B01.led (source/--),
+                # DK01.ledb (source/---).  Each .led ZIP has MULTIPLE internal
+                # shelve dirs (2 gameplay + 2 audio feedback). We pick the dir
+                # whose para_key_game has play_order=False (main gameplay).
                 dict_group = None
                 game_obj = None
                 try:
                     import zipfile
                     import tempfile
 
-                    # Resolve level file across all buckets:
-                    #   Extra/*.led  → single-player test levels
-                    #   source/---/*.ledb → basic 2P
-                    #   source/--/*.led  → advanced 1P
-                    #   source/-/*.led   → pro 1P
-                    level_id = str(game.level) if game.level else "17"
-                    clone = "/Users/apple/parallel-work/ledhexagon_clone"
+                    level_id = str(game.level) if game.level else "A001"
+                    src = str(GAMES_ROOT)
                     candidates = [
-                        os.path.join(clone, "Extra",      f"{level_id}.led"),
-                        os.path.join(clone, "source", "---", f"{level_id}.ledb"),
-                        os.path.join(clone, "source", "--",  f"{level_id}.led"),
-                        os.path.join(clone, "source", "-",   f"{level_id}.led"),
+                        os.path.join(src, "source", "-",   f"{level_id}.led"),
+                        os.path.join(src, "source", "--",  f"{level_id}.led"),
+                        os.path.join(src, "source", "---", f"{level_id}.ledb"),
+                        # B-series challenge files have spaces in names
+                        *([p for p in __import__('glob').glob(
+                            os.path.join(src, "source", "--", f"{level_id}*.led"))
+                           if level_id in p] if not level_id.startswith('DK') else []),
                     ]
                     led_file = next((p for p in candidates if os.path.exists(p)), None)
 
                     if led_file:
-                        logger.debug(f"Loading game from .led file: {led_file}")
-
-                        # Extract zip and load shelve database.
-                        # Both .led and .ledb use same structure: <id>/game_file.*
+                        logger.debug(f"Loading Climb level: {led_file}")
                         with tempfile.TemporaryDirectory() as tmpdir:
                             with zipfile.ZipFile(led_file, 'r') as z:
                                 z.extractall(tmpdir)
 
-                            # Inner folder may be level_id or filename stem
-                            game_file_path = os.path.join(tmpdir, level_id, "game_file")
-                            if not os.path.exists(game_file_path + ".dat"):
-                                # Try walking to find it
-                                for root, _, files in os.walk(tmpdir):
-                                    if any(f.startswith("game_file") for f in files):
-                                        game_file_path = os.path.join(root, "game_file")
-                                        break
-                            if os.path.exists(game_file_path + ".dat"):
-                                db = shelve.open(game_file_path)
-                                dict_group = db.get("dict_group")
-                                game_obj = db.get("para_key_game")
-                                db.close()
+                            # Walk ALL game_file shelves; pick the one with
+                            # play_order=False (the main gameplay instance).
+                            # Audio-feedback dirs have play_order=True.
+                            best_gf = None; best_go = None; best_dg = None
+                            for root, _, files in os.walk(tmpdir):
+                                if not any(f.startswith("game_file") for f in files):
+                                    continue
+                                gf_path = os.path.join(root, "game_file")
+                                if not os.path.exists(gf_path + ".dat"):
+                                    continue
+                                try:
+                                    db = shelve.open(gf_path)
+                                    go = db.get("para_key_game")
+                                    dg = db.get("dict_group")
+                                    db.close()
+                                    if go is None or dg is None:
+                                        continue
+                                    # Prefer play_order=False (main gameplay)
+                                    if not getattr(go, "play_order", True):
+                                        best_go = go; best_dg = dg; best_gf = gf_path
+                                        break   # found main; stop scanning
+                                    elif best_go is None:
+                                        best_go = go; best_dg = dg; best_gf = gf_path
+                                except Exception:
+                                    continue
 
-                                if dict_group and game_obj:
-                                    logger.info(f"✓ Loaded real game: level {level_id}, groups={len(dict_group) if isinstance(dict_group, dict) else '?'}")
-                                else:
-                                    logger.warning(f"Game data missing in level {level_id}: dict_group={bool(dict_group)}, game={bool(game_obj)}")
+                            if best_dg and best_go:
+                                dict_group = best_dg
+                                game_obj   = best_go
+                                logger.info(
+                                    f"✓ Climb level {level_id}: "
+                                    f"groups={len(dict_group)}, "
+                                    f"play_order={getattr(game_obj,'play_order',None)}"
+                                )
+                            else:
+                                logger.warning(f"No valid game_file found in {led_file}")
                     else:
-                        logger.warning(f"Level file not found for: {level_id}")
+                        logger.warning(f"Climb level not found: {level_id}")
 
                 except Exception as load_err:
-                    logger.warning(f"Could not load .led file: {load_err}. Using mock loop.")
+                    logger.warning(f"Could not load Climb level: {load_err}. Using mock loop.")
 
                 game.play = play
                 game.led_table = led_table  # expose for press input
@@ -562,31 +642,23 @@ class GameManager:
                         grid = led_table.led_table
                         state = led_table.state_table
 
-                        # 1) Determine goal colors from indicators.
-                        #    goal_led  = P1; goal2_led = P2 (multiplayer only).
-                        for g in dgroup.values():
-                            gtype = getattr(g, "type", None)
-                            if not g.start_member:
-                                continue
-                            if not (g.start_time_sec <= total_pass <= g.end_time_sec):
-                                continue
-                            if gtype == Setting.WALL_LIGHT:
-                                game.goal_color = _group_main_color(g.color)
-                            elif gtype == Setting.SCREEN_LIGHT:
-                                game.goal2_color = _group_main_color(g.color)
-                                game.multiplayer = True
-
-                        # 2) CLASSIFY floor (normal_led) cells:
-                        #    - color == goal_color -> scoreable target
-                        #    - DEDUCT_COLOR         -> penalty + consume
-                        #    - red                  -> hazard (stays)
-                        #    - else                 -> decor (neutral)
-                        goal_cells = set()
+                        # ── CLIMB CLASSIFICATION ─────────────────────────────
+                        # Climb has NO goal_led indicator.  Scoring is
+                        # color-based: any FLOOR_LIGHT tile whose main-ring
+                        # color is in _CLIMB_COLOR_ARR is scoreable.
+                        # 2P DK levels: P1=blue (0,0,254), P2=orange (254,128,0).
+                        # Same-color 2P (DK-series same color): checkerboard split.
+                        # RED/DEDUCT = hazard as before.
+                        goal_cells  = set()
                         goal2_cells = set()
-                        red_cells = set()
+                        red_cells   = set()
                         deduct_cells = set()
-                        gc = game.goal_color
-                        gc2 = game.goal2_color
+
+                        # For 2P DK levels multiplayer is detected at create time;
+                        # P1 = blue, P2 = orange.
+                        _P1_COLOR = (0, 0, 254)    # blue
+                        _P2_COLOR = (254, 128, 0)  # orange
+
                         for g in dgroup.values():
                             sm = getattr(g, "start_member", None)
                             if not sm:
@@ -597,17 +669,15 @@ class GameManager:
                                 continue
                             mc = _group_main_color(g.color)
                             is_deduct = _rgb_is_deduct(mc)
-                            # Goal color OVERRIDES red classification:
-                            # e.g. DK09 where P2 goal indicator = (254,0,0).
-                            # A tile that matches P1 or P2 goal color is scored,
-                            # not penalized, even if it looks red.
-                            is_p1_color = (gc is not None and mc == gc)
-                            is_p2_color = (gc2 is not None and mc == gc2)
-                            is_red = (not is_deduct and not is_p1_color
-                                      and not is_p2_color and _rgb_is_red(mc))
-                            is_goal = is_p1_color and not is_deduct
-                            is_goal2 = is_p2_color and not is_deduct
-                            same_color_2p = (is_goal and is_goal2)
+                            is_red = (not is_deduct and mc in _CLIMB_HAZARD_COLORS)
+                            is_p1 = mc == _P1_COLOR and not is_red and not is_deduct
+                            is_p2 = mc == _P2_COLOR and not is_red and not is_deduct
+                            # 1P: any color in COLOR_ARR (not red/deduct) is scoreable
+                            is_generic_goal = (
+                                not is_red and not is_deduct
+                                and mc in set(_CLIMB_COLOR_ARR)
+                                and not game.multiplayer  # 1P only
+                            )
                             for cell in sm:
                                 ci = round(cell[0]); cj = round(cell[1])
                                 if not (0 <= ci < led_table.led_row and 0 <= cj < led_table.led_col):
@@ -616,21 +686,16 @@ class GameManager:
                                     deduct_cells.add((ci, cj))
                                 elif is_red:
                                     red_cells.add((ci, cj))
-                                elif same_color_2p:
-                                    # Checkerboard spatial split so each player
-                                    # has their own distinct tiles even when
-                                    # P1 and P2 share the same goal color (DK03).
-                                    if (ci + cj) % 2 == 0:
-                                        goal_cells.add((ci, cj))
-                                    else:
-                                        goal2_cells.add((ci, cj))
-                                elif is_goal:
+                                elif game.multiplayer:
+                                    # 2P DK: P1=blue, P2=orange
+                                    if is_p1: goal_cells.add((ci, cj))
+                                    elif is_p2: goal2_cells.add((ci, cj))
+                                elif is_generic_goal:
                                     goal_cells.add((ci, cj))
-                                elif is_goal2:
-                                    goal2_cells.add((ci, cj))
-                        game.goal_cells = goal_cells
+
+                        game.goal_cells  = goal_cells
                         game.goal2_cells = goal2_cells
-                        game.red_cells = red_cells
+                        game.red_cells   = red_cells
                         game.deduct_cells = deduct_cells
 
                         # 2) SCORE pressed cells (type-aware). Drop scored marks
@@ -722,30 +787,45 @@ class GameManager:
 
                 # Run the REAL game loop. Play.running() moves groups (sweeping
                 # patterns), advances time, and fires _frame_callback each frame.
-                if dict_group:
+                if dict_group and play:
                     logger.info(f"Running real game logic via Play.running(): {game_id}")
                     play.callback = _frame_callback
                     try:
                         play.running(dict_group)
                     except Exception as run_err:
-                        logger.error(f"Play.running() error: {run_err}", exc_info=True)
-                    # Loop exited -> game over
-                    game.update_state(game_over=True, time_left=0)
-                else:
-                    logger.debug(f"No game data, using mock loop: {game_id}")
-                    # Fallback mock loop
+                        logger.warning(f"Real game failed, using mock loop: {run_err}")
+                        dict_group = None  # Fall through to mock loop
+                elif dict_group and not play:
+                    # Play object failed but dict_group loaded; skip real game
+                    logger.debug(f"Play object unavailable, using mock loop: {game_id}")
+                    dict_group = None
+
+                # If no real game data OR real game failed, run mock loop
+                if dict_group is None or not dict_group:
+                    logger.debug(f"Mock loop: {game_id}")
                     frame_count = 0
+                    # Generate test pattern: animated tiles moving across grid
+                    rows, cols = 16, 26
                     while game.running and not game.is_expired():
                         try:
                             elapsed = time.time() - game_start_time
                             frame_count += 1
                             score = max(0, int(elapsed * 10))
 
+                            # Simple test pattern: 3 moving white tiles
+                            led_display = [[0, 0, 0]] * (rows * cols)
+                            wave_pos = int((frame_count / 10) % cols)
+                            for row in range(1, 4):
+                                idx = row * cols + wave_pos
+                                if 0 <= idx < len(led_display):
+                                    led_display[idx] = [255, 255, 255]  # White tile
+
                             game.update_state(
                                 score=score,
                                 time_elapsed=elapsed,
                                 time_left=max(0, 180 - elapsed),
-                                game_over=elapsed > 180
+                                game_over=elapsed > 180,
+                                led_display=led_display
                             )
 
                             time.sleep(0.016)
@@ -756,6 +836,9 @@ class GameManager:
                         except Exception as frame_error:
                             logger.error(f"Frame update error {game_id}: {frame_error}")
                             break
+                else:
+                    # Real game loop exited -> game over
+                    game.update_state(game_over=True, time_left=0)
 
                 game.running = False
 

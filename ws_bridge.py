@@ -7,6 +7,7 @@ import asyncio
 import json
 import threading
 import time
+from pathlib import Path
 from typing import Set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -18,7 +19,7 @@ import httpx
 app = FastAPI()
 
 # Serve static simulator files
-SIMULATOR_STATIC = "/Users/apple/parallel-work/ledhexagon_clone/simulator/static"
+SIMULATOR_STATIC = str(Path(__file__).resolve().parent / "simulator" / "static")
 app.mount("/static", StaticFiles(directory=SIMULATOR_STATIC), name="static")
 
 HOST = "127.0.0.1"
