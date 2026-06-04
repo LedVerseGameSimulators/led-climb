@@ -163,6 +163,130 @@ def load_real_settings() -> dict:
     logger.info(f"Loaded real settings: {s}")
     return s
 
+class HeadlessLedTable:
+    """In-memory LED table — replaces tkinter LedTable for headless API operation.
+    Same interface as gui2/gui_led_table_editor.LedTable but zero GUI deps.
+    Ported from LED-Hex SimulatorLedTable.
+    """
+
+    def __init__(self, wall_light_arr_len: int, led_row: int, led_col: int):
+        self.led_row = led_row
+        self.led_col = led_col
+        self.row = led_row
+        self.col = led_col
+        # Floor LED colors: led_table[row][col] = [R, G, B]
+        self.led_table = [[[0, 0, 0] for _ in range(led_col)] for _ in range(led_row)]
+        # Tile press state: True = being stepped on
+        self._state_table = [[False] * led_col for _ in range(led_row)]
+        self.table_state = self._state_table   # shared ref
+        self.state_table = self._state_table   # alias (game_manager callback uses this)
+        self.state_2array = [[5] * led_col for _ in range(led_row)]
+        self.g_wall_has_been_tread_arr2 = [[False] * led_col for _ in range(led_row)]
+        # Wall arrays
+        self._wall_light_arr = [[0, 0, 0] for _ in range(wall_light_arr_len)]
+        self._wall_light_state_array = [False] * wall_light_arr_len
+        self._wall_screen_arr = [0] * wall_light_arr_len
+        # Per-tile scoring state
+        self.red_table = [[False] * led_col for _ in range(led_row)]
+        self.green_table = [[False] * led_col for _ in range(led_row)]
+        self.safe_table = [[False] * led_col for _ in range(led_row)]
+        self.deduct_table = [[False] * led_col for _ in range(led_row)]
+        self.plus_table = [[None] * led_col for _ in range(led_row)]
+        self.other_color_table = [[False] * led_col for _ in range(led_row)]
+        self.blue_table = [[False] * led_col for _ in range(led_row)]
+        self.tread_short_stay = [[None] * led_col for _ in range(led_row)]
+        self.goal_color = None
+        self.goal_color2 = None
+        self.safe_color = None
+        self.canvas = None
+        self.led_coors_click = [[0, 0], False]
+        self.led_coors_click_wall = [[0, 0], False]
+
+    # ── State table ────────────────────────────────────────────────────
+    def get_state_table(self):
+        return self._state_table
+
+    def get_state_2array(self):
+        return self.state_2array
+
+    def get_g_wall_has_been_tread_arr2(self):
+        return self.g_wall_has_been_tread_arr2
+
+    # ── Wall accessors ─────────────────────────────────────────────────
+    def get_wall_light_arr(self):
+        return self._wall_light_arr
+
+    def get_wall_light_state_array(self):
+        return self._wall_light_state_array
+
+    def get_wall_screen_arr(self):
+        return self._wall_screen_arr
+
+    # ── Color output ───────────────────────────────────────────────────
+    def set_color_table_by_set_cell(self, start_member, color) -> None:
+        c = list(color) if isinstance(color, (tuple, list)) else [0, 0, 0]
+        for cell in (start_member or []):
+            try:
+                r_idx, c_idx = int(round(cell[0])), int(round(cell[1]))
+                if 0 <= r_idx < self.led_row and 0 <= c_idx < self.led_col:
+                    self.led_table[r_idx][c_idx] = c[:]
+            except (IndexError, TypeError, ValueError):
+                pass
+
+    def set_table_color(self, table, color=None):
+        c = list(color) if isinstance(color, (tuple, list)) else [0, 0, 0]
+        for row in table:
+            for i in range(len(row)):
+                row[i] = c[:]
+
+    def redraw_led_table_default(self, line=0, draw_canvas=True):
+        pass  # no-op: game_manager reads led_table directly
+
+    def draw_led_color(self):
+        pass
+
+    def clear_led_table(self):
+        for r in range(self.led_row):
+            for c in range(self.led_col):
+                self.led_table[r][c] = [0, 0, 0]
+        for i in range(len(self._wall_light_arr)):
+            self._wall_light_arr[i] = [0, 0, 0]
+        self._wall_screen_arr = [0] * wall_light_arr_len
+
+    def screen_mouse_click_state_get(self):
+        pass
+
+    # ── Input (press/release from simulator) ──────────────────────────
+    def press_cell(self, row: int, col: int):
+        if 0 <= row < self.led_row and 0 <= col < self.led_col:
+            self._state_table[row][col] = True
+
+    def release_cell(self, row: int, col: int):
+        if 0 <= row < self.led_row and 0 <= col < self.led_col:
+            self._state_table[row][col] = False
+
+    # ── tkinter-compat stubs ───────────────────────────────────────────
+    def pack(self, **kw): pass
+    def grid(self, **kw): pass
+    def update(self): pass
+    def update_idletasks(self): pass
+    def configure(self, **kw): pass
+    def config(self, **kw): pass
+    def destroy(self): pass
+    def bind(self, *a, **kw): pass
+    def unbind(self, *a, **kw): pass
+    def after(self, ms, func=None, *args):
+        import threading
+        if func:
+            t = threading.Timer(ms / 1000.0, func, args)
+            t.daemon = True
+            t.start()
+    def after_cancel(self, *a): pass
+    def winfo_width(self): return self.led_col * 44
+    def winfo_height(self): return self.led_row * 38
+    def get_canvas_table_size(self): return (self.led_row, self.led_col)
+
+
 def _normalize_rings(cell):
     """Normalize a led_table cell to 3 ring colors [[r,g,b],[r,g,b],[r,g,b]]
     (outer, mid, inner). Cell is normally a 3-ring list, but tolerate a flat
@@ -524,11 +648,10 @@ class GameManager:
                     # If imports failed, force dict_group to None to skip to mock loop
                     dict_group = None
 
-                # Initialize game components (16x26 grid from settings)
-                led_table = None
-                if LedTable is not None:
-                    logger.debug(f"Initializing LED table for game {game_id}")
-                    led_table = LedTable(wall_light_arr_len=100, led_row=16, led_col=26)
+                # Initialize game components — always use HeadlessLedTable
+                # (never the mocked gui2 LedTable — that's MagicMock, comparisons fail)
+                led_table = HeadlessLedTable(wall_light_arr_len=100, led_row=16, led_col=26)
+                logger.debug(f"HeadlessLedTable ready: {led_table.led_row}x{led_table.led_col}")
 
                 # Create mock settings object with required attributes
                 # Climb's Play.__init__ expects setting.leval_span.get(), setting.blue_hide_max_time.get(), etc.

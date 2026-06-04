@@ -48,6 +48,64 @@ class Play:
 
     
     def deal_all_direction(self, group):
+        """Move group one step in group.direct, clipped to group.activity_area.
+        Returns (new_direction, new_start_member).
+        Ported from LED-Hex working implementation — replaces broken decompiled version.
+        """
+        direct = group.direct
+
+        _DELTA = {
+            Setting.UP:         (-1,  0),
+            Setting.DOWN:       ( 1,  0),
+            Setting.LEFT:       ( 0, -1),
+            Setting.RIGHT:      ( 0,  1),
+            Setting.LEFT_UP:    (-1, -1),
+            Setting.RIGHT_UP:   (-1,  1),
+            Setting.LEFT_DOWN:  ( 1, -1),
+            Setting.RIGHT_DOWN: ( 1,  1),
+        }
+
+        if direct not in _DELTA:
+            return (direct, list(group.start_member) if group.start_member else [])
+
+        dr, dc = _DELTA[direct]
+
+        area = group.activity_area
+        row_from, row_to = area[0]
+        col_from, col_to = area[1]
+
+        new_members = []
+        for cell in group.start_member:
+            nr = cell[0] + dr
+            nc = cell[1] + dc
+            if row_from <= nr < row_to and col_from <= nc < col_to:
+                new_members.append((nr, nc))
+
+        if not new_members and group.start_member:
+            _REVERSE = {
+                Setting.UP:         Setting.DOWN,
+                Setting.DOWN:       Setting.UP,
+                Setting.LEFT:       Setting.RIGHT,
+                Setting.RIGHT:      Setting.LEFT,
+                Setting.LEFT_UP:    Setting.RIGHT_DOWN,
+                Setting.RIGHT_DOWN: Setting.LEFT_UP,
+                Setting.LEFT_DOWN:  Setting.RIGHT_UP,
+                Setting.RIGHT_UP:   Setting.LEFT_DOWN,
+            }
+            direct = _REVERSE.get(direct, direct)
+            dr, dc = _DELTA.get(direct, (0, 0))
+            for cell in group.start_member:
+                nr = cell[0] + dr
+                nc = cell[1] + dc
+                if row_from <= nr < row_to and col_from <= nc < col_to:
+                    new_members.append((nr, nc))
+                else:
+                    new_members.append((cell[0], cell[1]))
+
+        return (direct, new_members)
+
+    def deal_all_direction_DECOMPILE_ERROR(self, group):
+        """Original broken decompiled version kept for reference."""
         ROW_MIN = group.activity_area[0][0]
         ROW_MAX = group.activity_area[0][1] - 1
         COL_MIN = group.activity_area[1][0]
@@ -330,17 +388,24 @@ class Play:
 
     
     def clear_led_table(self, color = (Color.BLACK,)):
+        # Unwrap tuple-wrapped color: (Color.BLACK,) -> Color.BLACK -> [0,0,0]
+        c = color[0] if isinstance(color, tuple) and len(color) == 1 else color
+        if isinstance(c, (list, tuple)):
+            c = list(c)
+        else:
+            c = [0, 0, 0]
         obj_led_table = self.obj_led_table
         led_table = obj_led_table.led_table
         arr_wall_light = obj_led_table.get_wall_light_arr()
         arr_wall_screen = obj_led_table.get_wall_screen_arr()
         for i in range(len(arr_wall_light)):
-            arr_wall_light[i] = color
-            arr_wall_screen[i] = 0
-        
+            arr_wall_light[i] = c[:]
+            if i < len(arr_wall_screen):
+                arr_wall_screen[i] = 0
+
         for i in range(len(led_table)):
             for j in range(len(led_table[0])):
-                led_table[i][j] = color
+                led_table[i][j] = c[:]
             
         
 
@@ -409,6 +474,10 @@ class Play:
 
     
     def running(self, dict_group):
+        """Main game loop — ported from LED-Hex working implementation.
+        Replaces broken decompiled version (had inverted branch logic + missing
+        move_distance gate causing every static group to move every frame).
+        """
         logger.info('editor game running by time')
         self.dict_group = dict_group
         self.running_state = True
@@ -420,30 +489,30 @@ class Play:
             self.current_time = time.time()
             time_pass = self.current_time - self.last_time
             self.last_time = self.current_time
-            r = 0
-            c = 1
             self.total_pass += time_pass
             for key, value in self.dict_group.items():
                 group = value
-                set_cell = group.start_member
                 change = 0
                 last_speed = 0
                 if group.speed != 0:
-      
-
-                    last_speed = (1 / group.speed) * self.game_level_speed
+                    last_speed = 1 / group.speed * self.game_level_speed
+                    change = last_speed * time_pass
                 start_time = group.start_time_sec
                 end_time = group.end_time_sec
-                if self.group_in_time(start_time, end_time) or last_speed != 0:
-                    tmp_time = self.total_pass - start_time
-                    if tmp_time < time_pass:
-                        change = tmp_time * last_speed
-                group.move_distance += change
-                (direction_current, set_cell_current) = self.deal_all_direction(group)
-                group.start_member = set_cell_current
-                group.direct = direction_current
-                self.dict_group[key] = group
-            
+                if self.group_in_time(start_time, end_time):
+                    if last_speed != 0:
+                        tmp_time = self.total_pass - start_time
+                        if tmp_time < time_pass:
+                            change = tmp_time * last_speed
+                        group.move_distance += change
+                        if self.smaller(group.move_distance, 1):
+                            continue
+                        group.move_distance -= 1
+                        direction_current, set_cell_current = self.deal_all_direction(group)
+                        group.start_member = set_cell_current
+                        group.direct = direction_current
+                        self.dict_group[key] = group
+
             self.update(dict_group, time_pass)
 
     
