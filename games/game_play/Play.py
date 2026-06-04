@@ -65,44 +65,56 @@ class Play:
             Setting.RIGHT_DOWN: ( 1,  1),
         }
 
+        _REVERSE = {
+            Setting.UP:         Setting.DOWN,
+            Setting.DOWN:       Setting.UP,
+            Setting.LEFT:       Setting.RIGHT,
+            Setting.RIGHT:      Setting.LEFT,
+            Setting.LEFT_UP:    Setting.RIGHT_DOWN,
+            Setting.RIGHT_DOWN: Setting.LEFT_UP,
+            Setting.LEFT_DOWN:  Setting.RIGHT_UP,
+            Setting.RIGHT_UP:   Setting.LEFT_DOWN,
+        }
+
         if direct not in _DELTA:
             return (direct, list(group.start_member) if group.start_member else [])
 
-        dr, dc = _DELTA[direct]
+        cells = list(group.start_member)
+        if not cells:
+            return (direct, [])
 
+        dr, dc = _DELTA[direct]
         area = group.activity_area
         row_from, row_to = area[0]
         col_from, col_to = area[1]
 
-        new_members = []
-        for cell in group.start_member:
-            nr = cell[0] + dr
-            nc = cell[1] + dc
-            if row_from <= nr < row_to and col_from <= nc < col_to:
-                new_members.append((nr, nc))
+        def _in(nr, nc):
+            return row_from <= nr < row_to and col_from <= nc < col_to
 
-        if not new_members and group.start_member:
-            _REVERSE = {
-                Setting.UP:         Setting.DOWN,
-                Setting.DOWN:       Setting.UP,
-                Setting.LEFT:       Setting.RIGHT,
-                Setting.RIGHT:      Setting.LEFT,
-                Setting.LEFT_UP:    Setting.RIGHT_DOWN,
-                Setting.RIGHT_DOWN: Setting.LEFT_UP,
-                Setting.LEFT_DOWN:  Setting.RIGHT_UP,
-                Setting.RIGHT_UP:   Setting.LEFT_DOWN,
-            }
-            direct = _REVERSE.get(direct, direct)
-            dr, dc = _DELTA.get(direct, (0, 0))
-            for cell in group.start_member:
-                nr = cell[0] + dr
-                nc = cell[1] + dc
-                if row_from <= nr < row_to and col_from <= nc < col_to:
-                    new_members.append((nr, nc))
-                else:
-                    new_members.append((cell[0], cell[1]))
+        moved = [(c[0] + dr, c[1] + dc) for c in cells]
 
-        return (direct, new_members)
+        # No edge hit: whole group advances rigidly.
+        if all(_in(nr, nc) for nr, nc in moved):
+            return (direct, moved)
+
+        # An edge is hit. Behavior depends on edge_run_into.
+        edge = getattr(group, "edge_run_into", Setting.BACK)
+
+        if edge in (Setting.DISAPPEAR, Setting.SLOW_DISAPPEAR):
+            # Cells leaving the area vanish; the rest advance.
+            kept = [(nr, nc) for nr, nc in moved if _in(nr, nc)]
+            return (direct, kept)
+
+        # BACK (and default): RIGID BOUNCE — reverse direction and move the
+        # whole pattern, preserving every cell (no width erosion). If the
+        # reversed move also overflows (pattern wider than area), just flip
+        # direction and hold position this frame.
+        ndirect = _REVERSE.get(direct, direct)
+        ndr, ndc = _DELTA.get(ndirect, (0, 0))
+        rmoved = [(c[0] + ndr, c[1] + ndc) for c in cells]
+        if all(_in(nr, nc) for nr, nc in rmoved):
+            return (ndirect, rmoved)
+        return (ndirect, cells)
 
     def deal_all_direction_DECOMPILE_ERROR(self, group):
         """Original broken decompiled version kept for reference."""

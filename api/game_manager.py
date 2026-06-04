@@ -937,12 +937,19 @@ class GameManager:
                         deduct_cells = set()
                         green_cells = set()   # safe platforms — shield from RED
 
-                        # For 2P DK levels multiplayer is detected at create time;
-                        # P1 = blue, P2 = orange.
-                        _P1_COLOR = (0, 0, 254)    # blue
-                        _P2_COLOR = (254, 128, 0)  # orange
+                        _P1_COLOR = (0, 0, 254)    # blue   (P1)
+                        _P2_COLOR = (254, 128, 0)  # orange (P2)
                         _GREEN    = (0, 254, 0)    # safe platform (non-scoring)
 
+                        # ── PRIORITY OVERLAP RESOLUTION ──────────────────────
+                        # When multiple groups occupy the SAME cell, ONE wins by
+                        # rank: green(3) > red/deduct(2) > blue/orange/goal(1).
+                        # This gives each cell exactly ONE category + display
+                        # color, so a blue tile under a moving red reads red NOW
+                        # (and becomes scoreable again once red moves off it).
+                        #   cell_win[(i,j)] = (rank, category, rgb)
+                        cell_win = {}
+                        _scoreset = set(_CLIMB_COLOR_ARR)
                         for g in dgroup.values():
                             sm = getattr(g, "start_member", None)
                             if not sm:
@@ -952,37 +959,40 @@ class GameManager:
                             if not (g.start_time_sec <= total_pass <= g.end_time_sec):
                                 continue
                             mc = _group_main_color(g.color)
-                            is_green = mc == _GREEN
-                            is_deduct = _rgb_is_deduct(mc)
-                            is_red = (not is_deduct and mc in _CLIMB_HAZARD_COLORS)
-                            is_p1 = mc == _P1_COLOR and not is_red and not is_deduct
-                            is_p2 = mc == _P2_COLOR and not is_red and not is_deduct
-                            # 1P: any color in COLOR_ARR (not red/deduct/green) is scoreable
-                            is_generic_goal = (
-                                not is_red and not is_deduct and not is_green
-                                and mc in set(_CLIMB_COLOR_ARR)
-                                and not game.multiplayer  # 1P only
-                            )
+                            if mc == _GREEN:
+                                rank, cat = 3, "green"
+                            elif _rgb_is_deduct(mc):
+                                rank, cat = 2, "deduct"
+                            elif mc in _CLIMB_HAZARD_COLORS:
+                                rank, cat = 2, "red"
+                            elif game.multiplayer and mc == _P1_COLOR:
+                                rank, cat = 1, "p1"
+                            elif game.multiplayer and mc == _P2_COLOR:
+                                rank, cat = 1, "p2"
+                            elif (not game.multiplayer) and mc in _scoreset:
+                                rank, cat = 1, "goal"
+                            else:
+                                rank, cat = 0, "decor"
                             for cell in sm:
                                 ci = round(cell[0]); cj = round(cell[1])
                                 if not (0 <= ci < led_table.led_row and 0 <= cj < led_table.led_col):
                                     continue
-                                if is_green:
-                                    green_cells.add((ci, cj))
-                                elif is_deduct:
-                                    deduct_cells.add((ci, cj))
-                                elif is_red:
-                                    red_cells.add((ci, cj))
-                                elif game.multiplayer:
-                                    # 2P DK: P1=blue, P2=orange
-                                    if is_p1: goal_cells.add((ci, cj))
-                                    elif is_p2: goal2_cells.add((ci, cj))
-                                elif is_generic_goal:
-                                    goal_cells.add((ci, cj))
+                                prev = cell_win.get((ci, cj))
+                                if prev is None or rank > prev[0]:
+                                    cell_win[(ci, cj)] = (rank, cat, mc)
 
-                        # GREEN shields from RED: a cell covered by green takes no
-                        # red damage (faithful to `not green_table[i][j]` check).
-                        red_cells -= green_cells
+                        # Derive mutually-exclusive category sets from winners.
+                        for (ci, cj), (rank, cat, mc) in cell_win.items():
+                            if cat == "green":
+                                green_cells.add((ci, cj))
+                            elif cat == "deduct":
+                                deduct_cells.add((ci, cj))
+                            elif cat == "red":
+                                red_cells.add((ci, cj))
+                            elif cat == "p1" or cat == "goal":
+                                goal_cells.add((ci, cj))
+                            elif cat == "p2":
+                                goal2_cells.add((ci, cj))
 
                         game.goal_cells  = goal_cells
                         game.goal2_cells = goal2_cells
@@ -1063,40 +1073,22 @@ class GameManager:
                                     if state[i][j]:
                                         game.try_score_cell(i, j)
 
-                        # 2) Build display buffer — SINGLE RGB per cell (Climb format).
-                        #    Climb tiles are single-color squares, NOT 3-ring hexagons.
-                        #    led_table[r][c] is already [R,G,B] written by Play.update().
+                        # 2) Build display buffer from the PRIORITY winner map so
+                        #    overlapping cells render the WINNING color (green >
+                        #    red/deduct > blue/orange), matching interaction.
+                        #    Single RGB per cell (Climb = square single-color).
                         cols = led_table.led_col
-                        led_display = []
-                        for row in grid:
-                            for cell in row:
-                                if isinstance(cell, (list, tuple)) and len(cell) >= 3 \
-                                        and not isinstance(cell[0], (list, tuple)):
-                                    led_display.append([int(cell[0]), int(cell[1]), int(cell[2])])
-                                else:
-                                    led_display.append([0, 0, 0])
-
-                        # 2a) PULSE: shimmer goal-color tiles between 60-100% brightness.
+                        rows = led_table.led_row
                         import math as _math
                         pulse = 0.60 + 0.40 * (0.5 + 0.5 * _math.sin(total_pass * _math.pi * 2))
-                        goal_cs = {_P1_COLOR, _P2_COLOR} if game.multiplayer else set(_CLIMB_COLOR_ARR)
-                        for g in dgroup.values():
-                            try:
-                                sm = getattr(g, "start_member", None)
-                                if not sm:
-                                    continue
-                                if not (g.start_time_sec <= total_pass <= g.end_time_sec):
-                                    continue
-                                mc = _group_main_color(g.color)
-                                if mc not in goal_cs:
-                                    continue
-                                bc = [int(ch * pulse) for ch in mc]
-                                for cell in sm:
-                                    ci = round(cell[0]); cj = round(cell[1])
-                                    if 0 <= ci < led_table.led_row and 0 <= cj < cols:
-                                        led_display[ci * cols + cj] = bc
-                            except Exception:
-                                continue
+                        led_display = [[0, 0, 0] for _ in range(rows * cols)]
+                        for (ci, cj), (rank, cat, mc) in cell_win.items():
+                            idx = ci * cols + cj
+                            if cat in ("goal", "p1", "p2"):
+                                # scoreable tiles shimmer
+                                led_display[idx] = [int(ch * pulse) for ch in mc]
+                            else:
+                                led_display[idx] = [int(mc[0]), int(mc[1]), int(mc[2])]
 
                         # 2b) FLASH: stepped tiles blink white ~0.4s then vanish.
                         now = time.time()
