@@ -727,7 +727,7 @@ class GameManager:
                         #     Decor tiles remain static (no pulse).
                         import math as _math
                         pulse = 0.60 + 0.40 * (0.5 + 0.5 * _math.sin(total_pass * _math.pi * 2))
-                        goal_cs = {gc, gc2} - {None}
+                        goal_cs = {_P1_COLOR, _P2_COLOR} if game.multiplayer else set(_CLIMB_COLOR_ARR)
                         for g in dgroup.values():
                             try:
                                 sm = getattr(g, "start_member", None)
