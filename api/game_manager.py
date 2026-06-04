@@ -27,6 +27,16 @@ sys.modules['tkinter.messagebox'] = MagicMock()
 sys.modules['encryption'] = MagicMock()
 sys.modules['encryption.yanqian'] = MagicMock()
 sys.modules['rsa'] = MagicMock()
+sys.modules['serial'] = MagicMock()  # pyserial for hardware LED control
+sys.modules['serial.tools'] = MagicMock()
+sys.modules['serial.tools.list_ports'] = MagicMock()
+sys.modules['led'] = MagicMock()
+sys.modules['led.led_control'] = MagicMock()
+sys.modules['led.communication'] = MagicMock()
+sys.modules['led.position_convert'] = MagicMock()
+sys.modules['led.led_serial_thread'] = MagicMock()
+sys.modules['led.led_control_c'] = MagicMock()
+sys.modules['net'] = MagicMock()
 # GUI modules (not used in headless, game_play may import them)
 for gui_mod in ['gui2', 'gui2.gui_led_table_editor', 'gui2.gui_led_canvas2',
                 'gui2.gui_table_editor', 'gui2.ui_player_setting', 'gui2.ui_table', 'gui2.gui_util']:
@@ -441,11 +451,19 @@ class GameManager:
                 game.running = True
 
                 # Import game modules
+                logger.info(f"Importing game modules for {game_id}")
+                logger.info(f"GAMES_ROOT: {GAMES_ROOT}")
+                logger.info(f"sys.path[0]: {sys.path[0] if sys.path else 'EMPTY'}")
+                logger.info(f"'serial' mocked: {'serial' in sys.modules}")
                 import shelve
                 import os
+                logger.debug(f"Importing Play...")
                 from game_play.Play import Play
+                logger.debug(f"✓ Play imported")
                 from game_play.game_running import LedTable
+                logger.debug(f"✓ LedTable imported")
                 from model.setting import Setting
+                logger.debug(f"✓ Setting imported")
 
                 # Initialize game components (16x26 grid from settings)
                 logger.debug(f"Initializing LED table for game {game_id}")
