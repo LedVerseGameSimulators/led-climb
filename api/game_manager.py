@@ -22,27 +22,71 @@ from .config import GAME_TIMEOUT_SECONDS, MAX_CONCURRENT_GAMES, GAMES_ROOT
 import sys
 from unittest.mock import MagicMock
 
-sys.modules['tkinter'] = MagicMock()
-sys.modules['tkinter.messagebox'] = MagicMock()
-sys.modules['encryption'] = MagicMock()
-sys.modules['encryption.yanqian'] = MagicMock()
-sys.modules['rsa'] = MagicMock()
-sys.modules['serial'] = MagicMock()  # pyserial for hardware LED control
-sys.modules['serial.tools'] = MagicMock()
-sys.modules['serial.tools.list_ports'] = MagicMock()
-sys.modules['led'] = MagicMock()
-sys.modules['led.led_control'] = MagicMock()
-sys.modules['led.communication'] = MagicMock()
-sys.modules['led.position_convert'] = MagicMock()
-sys.modules['led.led_serial_thread'] = MagicMock()
-sys.modules['led.led_control_c'] = MagicMock()
-sys.modules['net'] = MagicMock()
-# GUI modules (not used in headless, game_play may import them)
-for gui_mod in ['gui2', 'gui2.gui_led_table_editor', 'gui2.gui_led_canvas2',
-                'gui2.gui_table_editor', 'gui2.ui_player_setting', 'gui2.ui_table', 'gui2.gui_util']:
-    sys.modules[gui_mod] = MagicMock()
-for mod in ['Crypto', 'Crypto.Hash', 'Crypto.Cipher', 'Crypto.PublicKey', 'Crypto.Signature']:
-    sys.modules[mod] = MagicMock()
+# Mock ALL external dependencies (hardware, GUI, media, etc)
+# Standard approach: mock before any imports to prevent ModuleNotFoundError
+mocks = {
+    # GUI/Display
+    'tkinter': MagicMock(),
+    'tkinter.messagebox': MagicMock(),
+    'tkinter.font': MagicMock(),
+    'gui': MagicMock(),
+    'gui.app_gui': MagicMock(),
+    'gui.gui_debugging': MagicMock(),
+    'gui.gui_setting': MagicMock(),
+    'gui.language': MagicMock(),
+    'gui2': MagicMock(),
+    'gui2.gui_led_table_editor': MagicMock(),
+    'gui2.gui_led_canvas2': MagicMock(),
+    'gui2.gui_table_editor': MagicMock(),
+    'gui2.ui_player_setting': MagicMock(),
+    'gui2.ui_table': MagicMock(),
+    'gui2.gui_util': MagicMock(),
+    'ui_design': MagicMock(),
+    # Hardware
+    'serial': MagicMock(),
+    'serial.tools': MagicMock(),
+    'serial.tools.list_ports': MagicMock(),
+    'led': MagicMock(),
+    'led.led_control': MagicMock(),
+    'led.communication': MagicMock(),
+    'led.position_convert': MagicMock(),
+    'led.led_serial_thread': MagicMock(),
+    'led.led_control_c': MagicMock(),
+    'net': MagicMock(),
+    'socket': MagicMock(),
+    # Audio/Video
+    'pygame': MagicMock(),
+    'pygame.mixer': MagicMock(),
+    'audio_play': MagicMock(),
+    'audio_play.audio': MagicMock(),
+    'moviepy': MagicMock(),
+    'moviepy.editor': MagicMock(),
+    'cv2': MagicMock(),
+    # Input
+    'pynput': MagicMock(),
+    'pynput.keyboard': MagicMock(),
+    'pynput.mouse': MagicMock(),
+    # Encryption
+    'encryption': MagicMock(),
+    'encryption.yanqian': MagicMock(),
+    'rsa': MagicMock(),
+    'Crypto': MagicMock(),
+    'Crypto.Hash': MagicMock(),
+    'Crypto.Cipher': MagicMock(),
+    'Crypto.PublicKey': MagicMock(),
+    'Crypto.Signature': MagicMock(),
+    # Database
+    'mysql': MagicMock(),
+    'mysql.connector': MagicMock(),
+    # Image processing
+    'numpy': MagicMock(),
+    'PIL': MagicMock(),
+    'PIL.Image': MagicMock(),
+    'PIL.ImageTk': MagicMock(),
+}
+
+for mod_name, mock in mocks.items():
+    sys.modules[mod_name] = mock
 
 # Will import after config is set
 # from game_play.Play import Play
@@ -447,6 +491,14 @@ class GameManager:
 
         def _run_game():
             try:
+                # Double-check: reinstall mocks in this thread
+                if 'serial' not in sys.modules:
+                    sys.modules['serial'] = MagicMock()
+                if 'led' not in sys.modules:
+                    sys.modules['led'] = MagicMock()
+                if 'led.led_control' not in sys.modules:
+                    sys.modules['led.led_control'] = MagicMock()
+
                 logger.info(f"Starting game loop: {game_id}")
                 game.running = True
 
@@ -464,6 +516,8 @@ class GameManager:
                     logger.info(f"✓ Game modules imported")
                 except Exception as import_err:
                     logger.warning(f"Game module import failed, using mock loop: {import_err}")
+                    import traceback
+                    logger.warning(f"Import traceback: {traceback.format_exc()}")
                     Play = None
                     LedTable = None
                     Setting = None
@@ -608,7 +662,7 @@ class GameManager:
                         game.zone = None
                 # Set multiplayer EAGERLY from dict_group so _consume_cell
                 # schedules respawn even if press arrives before first callback frame.
-                if dict_group:
+                if dict_group and Setting is not None:
                     game.multiplayer = any(
                         getattr(g, "type", None) == Setting.SCREEN_LIGHT
                         for g in dict_group.values()
@@ -722,6 +776,10 @@ class GameManager:
                         game.goal2_cells = goal2_cells
                         game.red_cells   = red_cells
                         game.deduct_cells = deduct_cells
+
+                        # DEBUG: log tile classification every 60 frames
+                        if frame_counter["n"] % 60 == 0:
+                            logger.debug(f"Frame {frame_counter['n']}: goal={len(goal_cells)}, red={len(red_cells)}, deduct={len(deduct_cells)}")
 
                         # 2) SCORE pressed cells (type-aware). Drop scored marks
                         #    for goals that are no longer active so they can score
@@ -868,7 +926,9 @@ class GameManager:
                 game.running = False
 
             except Exception as e:
-                logger.error(f"Game error {game_id}: {e}", exc_info=True)
+                import traceback
+                logger.error(f"Game error {game_id}: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 game.running = False
                 game.update_state(
                     game_over=True,
