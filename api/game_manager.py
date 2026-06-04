@@ -450,24 +450,31 @@ class GameManager:
                 logger.info(f"Starting game loop: {game_id}")
                 game.running = True
 
-                # Import game modules
-                logger.info(f"Importing game modules for {game_id}")
-                logger.info(f"GAMES_ROOT: {GAMES_ROOT}")
-                logger.info(f"sys.path[0]: {sys.path[0] if sys.path else 'EMPTY'}")
-                logger.info(f"'serial' mocked: {'serial' in sys.modules}")
-                import shelve
-                import os
-                logger.debug(f"Importing Play...")
-                from game_play.Play import Play
-                logger.debug(f"✓ Play imported")
-                from game_play.game_running import LedTable
-                logger.debug(f"✓ LedTable imported")
-                from model.setting import Setting
-                logger.debug(f"✓ Setting imported")
+                # Import game modules (with fallback to mock loop on import error)
+                Play = None
+                LedTable = None
+                Setting = None
+                try:
+                    logger.info(f"Importing game modules for {game_id}")
+                    import shelve
+                    import os
+                    from game_play.Play import Play
+                    from game_play.game_running import LedTable
+                    from model.setting import Setting
+                    logger.info(f"✓ Game modules imported")
+                except Exception as import_err:
+                    logger.warning(f"Game module import failed, using mock loop: {import_err}")
+                    Play = None
+                    LedTable = None
+                    Setting = None
+                    # If imports failed, force dict_group to None to skip to mock loop
+                    dict_group = None
 
                 # Initialize game components (16x26 grid from settings)
-                logger.debug(f"Initializing LED table for game {game_id}")
-                led_table = LedTable(wall_light_arr_len=100, led_row=16, led_col=26)
+                led_table = None
+                if LedTable is not None:
+                    logger.debug(f"Initializing LED table for game {game_id}")
+                    led_table = LedTable(wall_light_arr_len=100, led_row=16, led_col=26)
 
                 # Create mock settings object with required attributes
                 # Climb's Play.__init__ expects setting.leval_span.get(), setting.blue_hide_max_time.get(), etc.
