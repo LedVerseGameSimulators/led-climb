@@ -5,6 +5,7 @@ Connects to http://localhost:8000 API, broadcasts game state via WebSocket
 
 import asyncio
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -23,8 +24,11 @@ SIMULATOR_STATIC = str(Path(__file__).resolve().parent / "simulator" / "static")
 app.mount("/static", StaticFiles(directory=SIMULATOR_STATIC), name="static")
 
 HOST = "127.0.0.1"
-PORT = 8765
-API_BASE_URL = "http://localhost:8000"
+_DEFAULT_API_PORT = 8001
+_DEFAULT_WS_PORT = 8766
+API_PORT = int(os.getenv("API_PORT", _DEFAULT_API_PORT))
+PORT = int(os.getenv("WS_BRIDGE_PORT", _DEFAULT_WS_PORT))
+API_BASE_URL = os.getenv("API_BASE_URL", f"http://localhost:{API_PORT}")
 
 class GameBridge:
     """Bridge between API and WebSocket clients"""

@@ -6,7 +6,7 @@ import CountdownScreen     from './screens/CountdownScreen'
 import SimulatorScreen     from './screens/SimulatorScreen'
 import ResultScreen        from './screens/ResultScreen'
 
-const API_URL = 'http://localhost:8000'
+import { API_URL } from './config'
 
 const S = {
   GAME_SELECT: 'game_select',  // pick game type (LED Hex, Hoops…)

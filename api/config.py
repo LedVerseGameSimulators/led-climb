@@ -33,7 +33,7 @@ DB_NAME = os.getenv("DB_NAME", "ledplaydb")
 
 # API Configuration
 API_HOST = "0.0.0.0"
-API_PORT = int(os.getenv("API_PORT", 8000))
+API_PORT = int(os.getenv("API_PORT", 8001))
 API_DEBUG = os.getenv("API_DEBUG", "False").lower() == "true"
 
 # Game Configuration
