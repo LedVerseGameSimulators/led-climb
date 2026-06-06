@@ -1,5 +1,9 @@
 # Known Gaps & Open Questions
 
+> **Primary status & pending work:** [`CLIMB_DEVELOPMENT_PLAYBOOK.md`](./CLIMB_DEVELOPMENT_PLAYBOOK.md) (Climb) · [`../led-hexagon/docs/LED_HEX_DEVELOPMENT_PLAYBOOK.md`](../led-hexagon/docs/LED_HEX_DEVELOPMENT_PLAYBOOK.md) (Hex)
+
+This file focuses on **LED Hex** verification history. Climb-specific gaps (session marathon, square grid, multi-COM) are tracked in the Climb playbook.
+
 Tracks where our headless impl diverges from the real decompiled game, what is
 **verified in code** vs **inferred/guessed**, and what's still uncertain.
 

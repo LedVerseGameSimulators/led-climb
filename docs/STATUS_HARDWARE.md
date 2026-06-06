@@ -1,6 +1,9 @@
 # LED Hex — Implementation Status & Hardware Deployment
 
-**Last updated:** 2026-06-04
+> **Hex playbook (sim + pending):** [`../led-hexagon/docs/LED_HEX_DEVELOPMENT_PLAYBOOK.md`](../led-hexagon/docs/LED_HEX_DEVELOPMENT_PLAYBOOK.md)  
+> **Climb hardware notes:** 6×33 square grid, often **3 COM ports** — adapt Step 1–3 grid/COM values in [`CLIMB_DEVELOPMENT_PLAYBOOK.md`](./CLIMB_DEVELOPMENT_PLAYBOOK.md).
+
+**Last updated:** 2026-06-07
 **Overall completion:** ~90% (simulator fully functional; hardware I/O layer pending)
 
 ---

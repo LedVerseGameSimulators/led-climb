@@ -1,5 +1,9 @@
 # Implementation Roadmap (post-study)
 
+> **Updated checklists:** [`CLIMB_DEVELOPMENT_PLAYBOOK.md`](./CLIMB_DEVELOPMENT_PLAYBOOK.md) · [`../led-hexagon/docs/LED_HEX_DEVELOPMENT_PLAYBOOK.md`](../led-hexagon/docs/LED_HEX_DEVELOPMENT_PLAYBOOK.md)
+
+Many Phase 1 items below are **done** for Hex/Climb/Hoops headless sim (scoring, HP, session, 2P, overlap). Remaining work is mostly **hardware I/O (Phase 2)** and polish (Phase 3).
+
 Ordered by value × confidence × dependency. Each item: why, effort, risk.
 
 Guiding facts:

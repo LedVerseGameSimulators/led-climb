@@ -1,5 +1,8 @@
 # LED Hex Headless Game Stack — Deployment & API Reference
 
+> **Outdated paths below** — this doc references `kavida_claude` and old clone paths.  
+> **Use instead:** [`CLIMB_DEVELOPMENT_PLAYBOOK.md`](./CLIMB_DEVELOPMENT_PLAYBOOK.md) (Climb) or [`../led-hexagon/docs/LED_HEX_DEVELOPMENT_PLAYBOOK.md`](../led-hexagon/docs/LED_HEX_DEVELOPMENT_PLAYBOOK.md) (Hex) for current ports and `./scripts/start-dev.sh`.
+
 ## Quick Start
 
 Start all three services in separate terminals in this order:

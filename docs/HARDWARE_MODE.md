@@ -1,5 +1,7 @@
 # Will the headless impl work on the real LED floor?
 
+> **Per-game playbooks:** [Climb](./CLIMB_DEVELOPMENT_PLAYBOOK.md) · [Hex](../led-hexagon/docs/LED_HEX_DEVELOPMENT_PLAYBOOK.md) · [Hoops](../led-hoops/docs/HOOPS_DEVELOPMENT_PLAYBOOK.md)
+
 Short answer: **yes, mostly** — the game logic is I/O-agnostic. It operates on
 two arrays:
 

@@ -1,7 +1,10 @@
-# LED Hex — Settings & Config Reference
+# Settings & Config Reference (shared across floor games)
 
-Source of truth for all game settings. Documents every config field, its real
-value, what it controls, and our implementation status.
+> **Current implementation status per game:** see each repo’s development playbook (`CLIMB_DEVELOPMENT_PLAYBOOK.md`, `LED_HEX_DEVELOPMENT_PLAYBOOK.md`, `HOOPS_DEVELOPMENT_PLAYBOOK.md`).
+
+Source of truth for shelve fields. Documents config keys, typical values, and **original** implementation status when this doc was first written.
+
+**Headless API (2026-06):** Most “Game rules” fields below are now **read from shelve** in all three games (`game_time_sw`, `life_value_sw`, `value_high`/`value_width`, etc.). Treat ❌ rows in early sections as **historical** unless the playbook still lists them as pending.
 
 Status legend:
 - ✅ **used** — we read/honor it
