@@ -24,7 +24,7 @@ SIMULATOR_STATIC = str(Path(__file__).resolve().parent / "simulator" / "static")
 app.mount("/static", StaticFiles(directory=SIMULATOR_STATIC), name="static")
 
 HOST = "127.0.0.1"
-_DEFAULT_API_PORT = 8001
+_DEFAULT_API_PORT = 8002
 _DEFAULT_WS_PORT = 8766
 API_PORT = int(os.getenv("API_PORT", _DEFAULT_API_PORT))
 PORT = int(os.getenv("WS_BRIDGE_PORT", _DEFAULT_WS_PORT))
@@ -43,12 +43,12 @@ class GameBridge:
         await ws.accept()
         async with self.lock:
             self.active_connections.add(ws)
-        print(f"✓ Client connected. Total: {len(self.active_connections)}")
+        print(f"[OK] Client connected. Total: {len(self.active_connections)}")
 
     async def disconnect(self, ws: WebSocket):
         async with self.lock:
             self.active_connections.discard(ws)
-        print(f"✓ Client disconnected. Total: {len(self.active_connections)}")
+        print(f"[OK] Client disconnected. Total: {len(self.active_connections)}")
 
     async def broadcast_state(self, game_state: dict):
         """Send game state to clients. Climb = SQUARE grid, SINGLE RGB per cell."""
@@ -93,7 +93,27 @@ class GameBridge:
                 try:
                     await ws.send_text(msg)
                 except Exception as e:
-                    print(f"✗ Send error: {e}")
+                    print(f"[ERR] Send error: {e}")
+                    dead.add(ws)
+            self.active_connections -= dead
+
+    async def broadcast_blank(self, rows: int, cols: int):
+        if not self.active_connections:
+            return
+        msg = json.dumps({
+            "type": "frame",
+            "rows": rows,
+            "cols": cols,
+            "grid": [[[0, 0, 0]] * cols for _ in range(rows)],
+            "fps": 30,
+            "game_id": None,
+        })
+        async with self.lock:
+            dead = set()
+            for ws in self.active_connections:
+                try:
+                    await ws.send_text(msg)
+                except Exception:
                     dead.add(ws)
             self.active_connections -= dead
 
@@ -117,6 +137,7 @@ async def status():
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     """WebSocket endpoint for simulator UI"""
+    client_game_id = ws.query_params.get("game_id")
     await bridge.connect(ws)
     async with httpx.AsyncClient() as client:
         try:
@@ -137,7 +158,7 @@ async def websocket_endpoint(ws: WebSocket):
                             timeout=2,
                         )
                 except Exception as e:
-                    print(f"✗ Input forward error: {e}")
+                    print(f"[ERR] Input forward error: {e}")
         except WebSocketDisconnect:
             await bridge.disconnect(ws)
 
@@ -147,23 +168,22 @@ async def poll_game_state():
         while True:
             try:
                 # Get active game state from API
-                resp = await client.get(f"{API_BASE_URL}/game-state", timeout=5)
+                resp = await client.get(f"{API_BASE_URL}/active-game", timeout=5)
                 data = resp.json()
 
                 if data.get("success"):
-                    # Game running - update state
                     bridge.current_game_id = data["game_id"]
                     bridge.game_state = data["state"]
                     await bridge.broadcast_state(bridge.game_state)
                 else:
-                    # No active game
                     bridge.current_game_id = None
                     bridge.game_state = {}
+                    await bridge.broadcast_blank(6, 33)
 
-                await asyncio.sleep(0.016)  # ~60fps
+                await asyncio.sleep(0.033)
 
             except Exception as e:
-                print(f"✗ Poll error: {e}")
+                print(f"[ERR] Poll error: {e}")
                 await asyncio.sleep(1)
 
 @app.on_event("startup")

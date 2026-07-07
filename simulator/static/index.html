@@ -153,7 +153,8 @@
 
 <script>
 // ── Configuration ──────────────────────────────────────────────────────
-const WS_URL = `ws://${location.host}/ws`;
+const _gameId = new URLSearchParams(location.search).get('game_id') || '';
+const WS_URL = `ws://${location.host}/ws${_gameId ? '?game_id=' + _gameId : ''}`;
 
 // Climb = SQUARE grid, SINGLE rgb per cell. Defaults match Climb (6x33).
 let ROWS = 6, COLS = 33;
