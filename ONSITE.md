@@ -95,33 +95,56 @@ Climb floor is wide (33 cols = full climbing wall width). All sections should li
 
 ---
 
-## Step 7 — Start game server
+## Step 7 — Install frontend dependencies
 
+```cmd
+cd C:\activerse\led-climb\frontend
+npm install
+```
+
+---
+
+## Step 8 — Start all 3 services
+
+**Option A — one command (recommended):**
+```cmd
+cd C:\activerse\led-climb
+scripts\start-dev.bat
+```
+
+**Option B — three terminals manually:**
+
+Terminal 1 — API:
 ```cmd
 cd C:\activerse\led-climb
 set USE_SERIAL_HD=1
 python -m uvicorn api.main:app --host 0.0.0.0 --port 8002
 ```
+Expected: `Hardware ready: 3 port(s), 6×33, layout=5`
 
-**Expected log:**
-```
-Hardware ready: 3 port(s), 6×33, layout=5
+Terminal 2 — ws_bridge:
+```cmd
+cd C:\activerse\led-climb
+set API_PORT=8002
+set WS_BRIDGE_PORT=8766
+python ws_bridge.py
 ```
 
-**PowerShell:**
-```powershell
-$env:USE_SERIAL_HD="1"
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8002
+Terminal 3 — Frontend:
+```cmd
+cd C:\activerse\led-climb\frontend
+npm run dev
 ```
 
 ---
 
-## Step 8 — Verify sim + hardware
+## Step 9 — Verify sim + hardware
 
-1. Browser → `http://localhost:8002`
+1. Browser → `http://localhost:5175`
 2. Start a Climb game
-3. Climbing tiles light on physical floor per game state
-4. Stepping on tiles registers input
+3. Simulator iframe renders 6×33 grid
+4. Climbing tiles light on physical floor per game state
+5. Stepping on tiles registers input
 
 ---
 
