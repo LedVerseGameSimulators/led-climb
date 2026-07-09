@@ -166,6 +166,7 @@ let holdMode = false;
 
 let grid = [];            // [row][col] = [r,g,b]
 let pressed = new Set();
+let serverPressed = new Set();
 let pressedCount = 0;
 let activeTiles = 0;
 
@@ -207,7 +208,7 @@ function drawFrame() {
       const row = grid[r] || [];
       const [ri, gi, bi] = cellRGB(row[c]);
       const key = `${r},${c}`;
-      const isPressed = pressed.has(key);
+      const isPressed = pressed.has(key) || serverPressed.has(key);
       const bright = colorBrightness(ri, gi, bi);
       const on = (ri + gi + bi) > 2;
       if (on) activeTiles++;
@@ -290,6 +291,9 @@ function connect() {
       const msg = JSON.parse(data);
       if (msg.type === 'frame') {
         ROWS = msg.rows; COLS = msg.cols; grid = msg.grid;
+        if (Array.isArray(msg.pressed)) {
+          serverPressed = new Set(msg.pressed.map(p => `${p.row},${p.col}`));
+        }
         document.getElementById('stat-fps').textContent = msg.fps;
         document.getElementById('stat-grid').textContent = `${ROWS}×${COLS}`;
         resizeCanvas();
