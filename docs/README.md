@@ -7,7 +7,8 @@
 | [STATUS_HARDWARE.md](./STATUS_HARDWARE.md) | Serial protocol & on-site calibration (Hex grid — adapt for 6×33) |
 | [GAPS.md](./GAPS.md) | Verified vs unverified mechanics (Hex history) |
 | [ROADMAP.md](./ROADMAP.md) | Phased plan (Phase 1 largely done) |
-| [LEVELS.md](./LEVELS.md) | Level catalog (Hex levels) |
+| [LEVELS.md](./LEVELS.md) | Level catalog (Hex levels — historical) |
+| [LEVEL_SCALING.md](./LEVEL_SCALING.md) | Authored 6×24 → wall 6×33 prepare/upscale |
 | [SETTINGS.md](./SETTINGS.md) | Shelve field reference |
 | [PLAYBOOK_OTHER_GAMES.md](./PLAYBOOK_OTHER_GAMES.md) | Porting template (Hex → other games) |
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Legacy API reference (paths outdated — use playbook) |
