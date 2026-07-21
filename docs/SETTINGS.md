@@ -79,7 +79,7 @@ Status legend:
 | Key | Real value | Controls | Status |
 |---|---|---|---|
 | `value_width` / `value_high` | 9 / 5 | active zone size (9 cols × 5 rows) | 🟡 render full 16×26 |
-| `floor_layout_coors_no_use` | coords | dead/unused floor cells | ❌ |
+| `floor_layout_coors_no_use` | coords | dead/unused floor cells; stripped from static groups during level prepare | ✅ |
 | `led_layout_type` | 1 | floor layout type | 🔌 |
 
 ### Network / hardware

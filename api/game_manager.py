@@ -14,6 +14,7 @@ import shelve as _shelve
 from typing import Dict, Optional
 from loguru import logger
 from .config import GAME_TIMEOUT_SECONDS, MAX_CONCURRENT_GAMES, GAMES_ROOT
+from .level_scaler import prepare_level_for_platform
 
 USE_SERIAL_HD = os.environ.get("USE_SERIAL_HD", "0") == "1"
 if USE_SERIAL_HD:
@@ -192,6 +193,10 @@ _SETTINGS_DEFAULTS = {
     "scode_divide_person": True,   # game_scode_divide_person
     "scode_divide_time": True,     # game_scode_divide_time
     "player_num": 1,               # player_num_sw (overridden by 2P levels)
+    "floor_layout_coors_no_use": (),  # dead floor cells stripped from static groups
+    "wall_light": False,
+    "screen_light": False,
+    "corner_line_start": 0,
 }
 
 _settings_cache = None
@@ -232,6 +237,20 @@ def load_real_settings() -> dict:
             pn = db.get("player_num_sw")
             if pn is not None:
                 s["player_num"] = int(float(pn))
+            no_use = db.get("floor_layout_coors_no_use")
+            if no_use is not None:
+                s["floor_layout_coors_no_use"] = [
+                    (int(cell[0]), int(cell[1])) for cell in no_use
+                ]
+            wall_light = db.get("wall_light")
+            if wall_light is not None:
+                s["wall_light"] = bool(wall_light)
+            screen_light = db.get("screen_light")
+            if screen_light is not None:
+                s["screen_light"] = bool(screen_light)
+            cls = db.get("corner_line_start")
+            if cls is not None:
+                s["corner_line_start"] = int(float(cls))
         finally:
             db.close()
     except Exception as e:
@@ -253,6 +272,83 @@ def load_real_settings() -> dict:
     _settings_cache = s
     logger.info(f"Loaded real settings: {s}")
     return s
+
+
+def _prepare_level_attempt(
+    groups,
+    game,
+    *,
+    led_table,
+    settings,
+    level_id,
+):
+    """Prepare an isolated scaled level copy for one gameplay attempt."""
+    source_rows = getattr(game, "row", None)
+    source_cols = getattr(game, "col", None)
+    try:
+        prepared_groups, prepared_game = prepare_level_for_platform(
+            groups,
+            game,
+            target_rows=led_table.led_row,
+            target_cols=led_table.led_col,
+            enable_wall_light=settings.get("wall_light") is True,
+            enable_screen_light=settings.get("screen_light") is True,
+            floor_layout_coors_no_use=settings.get("floor_layout_coors_no_use", ()),
+        )
+    except Exception as exc:
+        raise ValueError(f"Level {level_id} scaling failed: {exc}") from exc
+
+    zone = (
+        prepared_game.zone_row_from,
+        prepared_game.zone_row_to,
+        prepared_game.zone_col_from,
+        prepared_game.zone_col_to,
+    )
+    logger.info(
+        f"Level {level_id} prepared: {source_rows}x{source_cols} -> "
+        f"{led_table.led_row}x{led_table.led_col}, "
+        f"retained={len(prepared_groups)}, "
+        f"dropped={len(groups) - len(prepared_groups)}, zone={zone}"
+    )
+    return prepared_groups, prepared_game
+
+
+class LevelAttemptPreparationError(ValueError):
+    """A level attempt could not be loaded and prepared safely."""
+
+
+def _run_level_attempt(
+    path,
+    *,
+    led_table,
+    settings,
+    level_id,
+    setup_consumer,
+    play_consumer,
+    reset_consumer=None,
+):
+    """Load and prepare one fresh attempt before invoking runtime consumers."""
+    groups, game = _load_level_file(path)
+    if not groups:
+        raise LevelAttemptPreparationError(
+            f"Level {level_id} failed to load for attempt"
+        )
+    if reset_consumer is not None:
+        reset_consumer()
+    try:
+        groups, game = _prepare_level_attempt(
+            groups,
+            game,
+            led_table=led_table,
+            settings=settings,
+            level_id=level_id,
+        )
+    except ValueError as exc:
+        raise LevelAttemptPreparationError(str(exc)) from exc
+
+    setup_consumer(groups, game)
+    play_consumer(groups)
+    return groups, game
 
 
 # Level-progression tiers (dirs under source/, easy->hard). Category is
@@ -1337,37 +1433,47 @@ class GameManager:
                         break
 
                     lvl_id = os.path.basename(lvl_path).rsplit(".", 1)[0]
-                    dg, go = _load_level_file(lvl_path)
-                    if not dg:
-                        logger.warning(f"Skipping unloadable level: {lvl_id}")
-                        continue
 
                     # ── RESTART LOOP: replay this level whenever lives hit 0 with
                     #    >10s left (score persists, HP refills). Exits on level
                     #    clear, session timeout, or true game-over (life=0, <10s).
                     while True:
-                        # Reload fresh every attempt (including the first) — dg's
-                        # groups are mutated in-place as tiles are scored/consumed,
-                        # so reusing the same dg across a restart would replay with
-                        # already-scored tiles missing instead of a clean board.
-                        dg, go = _load_level_file(lvl_path)
-                        if not dg:
-                            logger.warning(f"Level {lvl_id} failed to reload; aborting level")
-                            break
-                        game.current_level_id = lvl_id
-                        game.reset_for_level()      # clear board state (keep score/life)
-                        _setup_level(dg, go)        # dict_group, board_time, zone, mp, anim
-                        session_elapsed = time.time() - game.session_start
-                        logger.info(f"▶ Level {lvl_id}: groups={len(dg)}, "
-                                    f"mp={game.multiplayer}, board_time={game.board_time_sec}s, "
-                                    f"score={game.score}, life={game.life}, "
-                                    f"t_left={game.game_time_sec - session_elapsed:.0f}s")
-
-                        # Run this level. Blocks until callback returns False.
-                        play.running_state = True
-                        play.total_pass = 0
+                        # Reload + prepare fresh every attempt (including the first).
+                        # Groups are mutated in-place as tiles are scored/consumed,
+                        # so reusing an unprepared/raw board would leave blank
+                        # columns and already-scored tiles missing on restart.
                         try:
-                            play.running(dg)
+                            def _play_level(dg):
+                                play.running_state = True
+                                play.total_pass = 0
+                                play.running(dg)
+
+                            def _setup_attempt(groups, game_obj):
+                                game.current_level_id = lvl_id
+                                _setup_level(groups, game_obj)
+                                session_elapsed = time.time() - game.session_start
+                                logger.info(
+                                    f"▶ Level {lvl_id}: groups={len(groups)}, "
+                                    f"mp={game.multiplayer}, "
+                                    f"board_time={game.board_time_sec}s, "
+                                    f"score={game.score}, life={game.life}, "
+                                    f"t_left={game.game_time_sec - session_elapsed:.0f}s"
+                                )
+
+                            dg, go = _run_level_attempt(
+                                lvl_path,
+                                led_table=led_table,
+                                settings=_s,
+                                level_id=lvl_id,
+                                reset_consumer=game.reset_for_level,
+                                setup_consumer=_setup_attempt,
+                                play_consumer=_play_level,
+                            )
+                        except LevelAttemptPreparationError as prep_err:
+                            logger.warning(
+                                f"Skipping unprepared level {lvl_id}: {prep_err}"
+                            )
+                            break
                         except Exception as run_err:
                             import traceback
                             logger.warning(f"Level {lvl_id} run error: {run_err}\n"
