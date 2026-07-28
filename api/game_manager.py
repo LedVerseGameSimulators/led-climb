@@ -13,7 +13,12 @@ import json
 import shelve as _shelve
 from typing import Dict, Optional
 from loguru import logger
-from .config import GAME_TIMEOUT_SECONDS, MAX_CONCURRENT_GAMES, GAMES_ROOT
+from .config import (
+    GAME_TIMEOUT_SECONDS,
+    MAX_CONCURRENT_GAMES,
+    GAMES_ROOT,
+    GAME_GROUP_LEVEL_DIR,
+)
 from .level_scaler import prepare_level_for_platform
 
 USE_SERIAL_HD = os.environ.get("USE_SERIAL_HD", "0") == "1"
@@ -356,6 +361,13 @@ def _run_level_attempt(
 # A 1P session marathons only the 1P tiers and never crosses into 2P.
 _TIERS_1P = ["-", "--"]      # A-series -> B-series (.led)
 _TIERS_2P = ["---"]          # DK 2P (.ledb)
+# Group mode: same dash-folder names as 1P, rooted at games/source_group/
+_TIERS_GROUP = list(_TIERS_1P)
+
+
+def _level_sort_key(p):
+    stem = os.path.basename(p).rsplit(".", 1)[0]
+    return (0, int(stem)) if stem.isdigit() else (1, stem.lower())
 
 
 def _build_level_sequence(start_level):
@@ -369,13 +381,9 @@ def _build_level_sequence(start_level):
     src = str(GAMES_ROOT)
     sl = str(start_level or "").strip()
 
-    def _sort_key(p):
-        stem = os.path.basename(p).rsplit(".", 1)[0]
-        return (0, int(stem)) if stem.isdigit() else (1, stem.lower())
-
     def _chain(dirs, ext):
         return [(d, sorted(_glob.glob(os.path.join(src, "source", d, f"*.{ext}")),
-                           key=_sort_key)) for d in dirs]
+                           key=_level_sort_key)) for d in dirs]
 
     chain_1p = _chain(_TIERS_1P, "led")
     chain_2p = _chain(_TIERS_2P, "ledb")
@@ -401,6 +409,48 @@ def _build_level_sequence(start_level):
     ti, fi = loc
     seq = list(chain[ti][1][fi:])         # remaining levels in the start tier
     for j in range(ti + 1, len(chain)):   # then all later SAME-category tiers
+        seq.extend(chain[j][1])
+    return seq
+
+
+def _build_group_level_sequence(start_level=None):
+    """Marathon paths from games/source_group/ (Group mode only, .led).
+
+    Same progression rules as 1P tiers, but a separate admin-curated tree.
+    If start_level is missing/unknown, begin at the first file of the first
+    non-empty group tier.
+    """
+    import glob as _glob
+    root = str(GAME_GROUP_LEVEL_DIR)
+    sl = str(start_level or "").strip()
+    if sl.lower() in ("", "auto", "none"):
+        sl = ""
+
+    chain = [
+        (d, sorted(_glob.glob(os.path.join(root, d, "*.led")), key=_level_sort_key))
+        for d in _TIERS_GROUP
+    ]
+    # Drop empty tiers so admins can leave a middle folder empty
+    chain = [(d, files) for d, files in chain if files]
+    if not chain:
+        return []
+
+    loc = None
+    if sl:
+        for ti, (_d, files) in enumerate(chain):
+            for fi, f in enumerate(files):
+                stem = os.path.basename(f).rsplit(".", 1)[0]
+                if stem == sl or stem.startswith(sl):
+                    loc = (ti, fi)
+                    break
+            if loc is not None:
+                break
+    if loc is None:
+        loc = (0, 0)
+
+    ti, fi = loc
+    seq = list(chain[ti][1][fi:])
+    for j in range(ti + 1, len(chain)):
         seq.extend(chain[j][1])
     return seq
 
@@ -646,11 +696,13 @@ class HeadlessGameGUI:
 class GameInstance:
     """Single running game instance"""
 
-    def __init__(self, game_id: str, card_id: str, level: int, difficulty: str):
+    def __init__(self, game_id: str, card_id: str, level: int, difficulty: str,
+                 mode: str = None):
         self.game_id = game_id
         self.card_id = card_id
         self.level = level
         self.difficulty = difficulty
+        self.mode = (mode or "").strip().lower() or None  # "group" or None
         self.created_at = time.time()
         self.play = None  # Play object
         self.led_table = None  # LedTable instance (for press input)
@@ -967,23 +1019,36 @@ class GameManager:
             _hw_blank_floor(lt)
         logger.info("Cleared all existing games")
 
-    def create_game(self, card_id: str, level: int, difficulty: str) -> str:
+    def create_game(self, card_id: str, level: int, difficulty: str,
+                    mode: str = None) -> str:
         """Create new game instance. Clears any prior games first (kiosk model)."""
         self.clear_all()
         with self.lock:
             game_id = str(uuid.uuid4())[:8]
-            game = GameInstance(game_id, card_id, level, difficulty)
+            game = GameInstance(game_id, card_id, level, difficulty, mode=mode)
 
             # Eagerly set multiplayer from file extension BEFORE the load
             # thread starts, so _consume_cell respawns correctly even if
             # a press arrives before the shelve is fully loaded (~7s).
-            _clone = str(GAMES_ROOT)
-            _ledb = os.path.join(_clone, "source", "---", f"{level}.ledb")
-            if os.path.exists(_ledb):
-                game.multiplayer = True
-                logger.info(f"Game created: {game_id} multiplayer=True (card={card_id}, level={level})")
+            # Group mode is always 1P (.led under source_group/).
+            if game.mode != "group":
+                _clone = str(GAMES_ROOT)
+                _ledb = os.path.join(_clone, "source", "---", f"{level}.ledb")
+                if os.path.exists(_ledb):
+                    game.multiplayer = True
+                    logger.info(
+                        f"Game created: {game_id} multiplayer=True "
+                        f"(card={card_id}, level={level})"
+                    )
+                else:
+                    logger.info(
+                        f"Game created: {game_id} (card={card_id}, level={level})"
+                    )
             else:
-                logger.info(f"Game created: {game_id} (card={card_id}, level={level})")
+                logger.info(
+                    f"Game created: {game_id} mode=group "
+                    f"(card={card_id}, level={level})"
+                )
 
             self.games[game_id] = game
             return game_id
@@ -1088,9 +1153,22 @@ class GameManager:
                 game._end_reason = None
                 import datetime as _dt
                 game.update_state(started_at=_dt.datetime.now().isoformat(timespec="seconds"))
-                game.level_sequence = _build_level_sequence(game.level)
-                logger.info(f"Session: {len(game.level_sequence)} levels from "
-                            f"'{game.level}' (5-min marathon)")
+                if game.mode == "group":
+                    game.level_sequence = _build_group_level_sequence(game.level)
+                    # Sync display start level to first playlist entry
+                    if game.level_sequence:
+                        game.level = os.path.basename(
+                            game.level_sequence[0]
+                        ).rsplit(".", 1)[0]
+                else:
+                    game.level_sequence = _build_level_sequence(game.level)
+                # Group mode is always 1P (.led under source_group/).
+                if game.mode == "group":
+                    game.multiplayer = False
+                logger.info(
+                    f"Session: {len(game.level_sequence)} levels from "
+                    f"'{game.level}' mode={game.mode or 'single'} (5-min marathon)"
+                )
 
                 game_start_time = game.session_start  # legacy alias for mock loop
 
