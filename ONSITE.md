@@ -12,6 +12,8 @@
 | Grid | 6 rows × 33 cols |
 | COM ports | 3 (read from shelve — see Step 4) |
 | Layout type | 5 (read from shelve to confirm) |
+| Hardware color order | RGB (`HW_COLOR_ORDER=RGB`) |
+| Serial sensor reads | Non-blocking (`HW_SERIAL_BLOCKING=0`) |
 | Display var | `led_display` |
 | Zip extract dir | `C:\activerse\led-climb` |
 | Python version | 3.10 or 3.11 |
@@ -65,6 +67,9 @@ python -c "import shelve; db=shelve.open('setting/led_parameter',flag='r'); [pri
 - `led_layout_type` — 5
 - `value_high` — 6
 - `value_width` — 33
+- `floor_layout_coors_no_use` — 66 coordinates: logical rows 0 and 5.
+  The active physical floor is rows 1–4 × 33 (132 wired tiles), so the
+  unused top and bottom simulator rows staying black is expected.
 
 ---
 
@@ -87,7 +92,8 @@ python test_hardware.py
 
 **Expected:**
 1. `All COM ports opened OK` (3 ports)
-2. Full 6×33 floor lights **green** for 3s
+2. Active 4×33 physical floor lights **green** for 3s; unused logical
+   rows 0 and 5 remain black
 3. Step on tiles → `PRESS detected: row=X col=Y`
 4. `Floor cleared. Done.`
 
@@ -118,6 +124,8 @@ Terminal 1 — API:
 ```cmd
 cd C:\activerse\led-climb
 set USE_SERIAL_HD=1
+set HW_COLOR_ORDER=RGB
+set HW_SERIAL_BLOCKING=0
 python -m uvicorn api.main:app --host 0.0.0.0 --port 8002
 ```
 Expected: `Hardware ready: 3 port(s), 6×33, layout=5`

@@ -65,7 +65,14 @@ class Communication:
         return self.main_engine.readline()
 
     def Send_data(self, data):
-        self.main_engine.write(data)
+        payload = bytes(bytearray(data))
+        written = self.main_engine.write(payload)
+        if written != len(payload):
+            raise serial.SerialTimeoutException(
+                "partial serial write on {}: {}/{} bytes".format(
+                    self.port, written, len(payload)
+                )
+            )
 
     def Recive_data(self, way):
         while True:

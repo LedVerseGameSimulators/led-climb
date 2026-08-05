@@ -29,6 +29,9 @@ _DEFAULT_WS_PORT = 8766
 API_PORT = int(os.getenv("API_PORT", _DEFAULT_API_PORT))
 PORT = int(os.getenv("WS_BRIDGE_PORT", _DEFAULT_WS_PORT))
 API_BASE_URL = os.getenv("API_BASE_URL", f"http://localhost:{API_PORT}")
+POLL_INTERVAL = float(os.getenv("WS_POLL_INTERVAL", "0.05"))
+POLL_FPS = max(1, round(1.0 / POLL_INTERVAL))
+DISCOVERY_INTERVAL = float(os.getenv("WS_DISCOVERY_INTERVAL", "1.0"))
 
 class GameBridge:
     """Bridge between API and WebSocket clients"""
@@ -84,7 +87,14 @@ class GameBridge:
             "cols": cols,
             "grid": grid,
             "pressed": game_state.get("pressed_tiles", []),
-            "fps": 60,
+            # Grid is already normalized above; omit the duplicate flat display
+            # while forwarding all score/life/timer/input-event telemetry.
+            "state": {
+                key: value
+                for key, value in game_state.items()
+                if key != "led_display"
+            },
+            "fps": POLL_FPS,
             "game_id": self.current_game_id
         })
 
@@ -114,6 +124,7 @@ class GameBridge:
             "cols": cols,
             "grid": [[[0, 0, 0]] * cols for _ in range(rows)],
             "pressed": [],
+            "state": None,
             "fps": 30,
             "game_id": None,
         })
@@ -179,24 +190,38 @@ async def websocket_endpoint(ws: WebSocket):
             await bridge.disconnect(ws)
 
 async def poll_game_state():
-    """Poll API for game state and broadcast to clients"""
+    """Discover the active game slowly, then poll that specific state.
+
+    This avoids repeatedly requesting /active-game (which returns the full
+    display) at frame rate and bounds the bridge to one 20 Hz state stream.
+    """
     async with httpx.AsyncClient() as client:
         while True:
             try:
-                # Get active game state from API
-                resp = await client.get(f"{API_BASE_URL}/active-game", timeout=5)
-                data = resp.json()
+                if bridge.current_game_id:
+                    resp = await client.get(
+                        f"{API_BASE_URL}/game-state/{bridge.current_game_id}",
+                        timeout=2,
+                    )
+                    data = resp.json()
+                    if data.get("success"):
+                        bridge.game_state = data["state"]
+                        await bridge.broadcast_state(bridge.game_state)
+                        await asyncio.sleep(POLL_INTERVAL)
+                        continue
+                    bridge.current_game_id = None
+                    bridge.game_state = {}
 
+                resp = await client.get(f"{API_BASE_URL}/active-game", timeout=2)
+                data = resp.json()
                 if data.get("success"):
                     bridge.current_game_id = data["game_id"]
                     bridge.game_state = data["state"]
                     await bridge.broadcast_state(bridge.game_state)
+                    await asyncio.sleep(POLL_INTERVAL)
                 else:
-                    bridge.current_game_id = None
-                    bridge.game_state = {}
                     await bridge.broadcast_blank(6, 33)
-
-                await asyncio.sleep(0.033)
+                    await asyncio.sleep(DISCOVERY_INTERVAL)
 
             except Exception as e:
                 print(f"[ERR] Poll error: {e}")

@@ -9,7 +9,7 @@ import encryption.yanqian as yanqian
 
 _GAMES_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DEBUG_PARAM = os.path.join(_GAMES_DIR, 'setting', 'debug_parameter')
-from led import communication, position_convert
+from led import communication, position_convert, sensor_protocol
 from loguru import logger
 import traceback
 from model.setting import Setting
@@ -24,6 +24,26 @@ m_col = 0
 com_is_block = False
 g_has_open = False
 rect_position_arr = None
+_sensor_read_buffers = {}
+_sensor_dropped_bytes = 0
+_HW_COLOR_ORDER = os.environ.get("HW_COLOR_ORDER", "RGB").upper()
+if sorted(_HW_COLOR_ORDER) != ["B", "G", "R"]:
+    logger.warning("Invalid HW_COLOR_ORDER={!r}; using RGB", _HW_COLOR_ORDER)
+    _HW_COLOR_ORDER = "RGB"
+
+
+def _encode_wire_color(color):
+    """Map logical RGB to this floor's wire channel order.
+
+    255 is reserved by the controller frame header, so payload channels are
+    capped at 254 to prevent a white flash from looking like a new header.
+    """
+    rgb = {
+        "R": max(0, min(254, int(color[0]))),
+        "G": max(0, min(254, int(color[1]))),
+        "B": max(0, min(254, int(color[2]))),
+    }
+    return tuple(rgb[channel] for channel in _HW_COLOR_ORDER)
 
 def init_layout(layout_type, layout_row, layout_col, position_no_use):
     global rect_position_arr
@@ -50,14 +70,26 @@ def init_com(list_com_info):
     global com_is_block
     global g_has_open
     global list_com
+    global _sensor_read_buffers
+    global _sensor_dropped_bytes
     list_com = []
+    _sensor_read_buffers = {}
+    _sensor_dropped_bytes = 0
     list_serial_open_error = []
     logger.info("init_com floor")
     if yanqian.yanqian():
         f = shelve.open(_DEBUG_PARAM)
-        com_is_block = f.get("com_is_block")
+        shelve_blocking = bool(f.get("com_is_block"))
         f.close()
-        logger.warning("串口阻塞{}", com_is_block)
+        # Blocking reads can wait up to 0.3s per COM port and stall the game
+        # thread for nearly a second. Hardware mode defaults to non-blocking;
+        # the legacy behavior remains available for diagnostics.
+        com_is_block = os.environ.get("HW_SERIAL_BLOCKING", "0") == "1"
+        logger.info(
+            "Serial reads: blocking={} (shelve requested {})",
+            com_is_block,
+            shelve_blocking,
+        )
         i = 0
         for com_info in list_com_info:
             com_name = get_com_num(com_info[0])
@@ -100,12 +132,14 @@ def get_com_name_list():
 
 def close_com():
     global g_has_open
+    global _sensor_read_buffers
     logger.info("close_com floor")
     if list_com is not None:
         for com in list_com:
             com[0].Close_Engine()
 
     g_has_open = False
+    _sensor_read_buffers = {}
 
 
 def draw_screen_by_com(layout_type, logic_2array):
@@ -125,9 +159,7 @@ def draw_screen_by_com(layout_type, logic_2array):
                         tuple_color = logic_2array[ri][ci]
                     else:
                         tuple_color = (0, 0, 0)
-                    array_com_protocal.append(tuple_color[0])
-                    array_com_protocal.append(tuple_color[1])
-                    array_com_protocal.append(tuple_color[2])
+                    array_com_protocal.extend(_encode_wire_color(tuple_color))
 
                 com[0].Send_data(array_com_protocal)
                 i += 1
@@ -144,10 +176,8 @@ def display_led_screen():
              com[1], com[2]]
             array = m_led_color_one_array[int(values[0]) - 1:int(values[1])]
             array_com_protocal = [255, 255]
-            for tuple in list(reversed(array)):
-                array_com_protocal.append(tuple[0])
-                array_com_protocal.append(tuple[1])
-                array_com_protocal.append(tuple[2])
+            for color in list(reversed(array)):
+                array_com_protocal.extend(_encode_wire_color(color))
 
             com[0].Send_data(array_com_protocal)
 
@@ -170,58 +200,47 @@ def index_form_last(buffer, char, size_data):
 
 
 def read(com, state_table, start_num, read_size=3, block=False):
+    """Read complete framed sensor snapshots without losing serial alignment."""
+    global _sensor_dropped_bytes
     in_len = com.in_waiting
-    if in_len >= read_size + 2:
+    if block and in_len < read_size + 2:
+        data_read_buffer = com.read(read_size + 2)
+    else:
         data_read_buffer = com.read_all()
-    else:
-        if block:
-            data_read_buffer = com.read(read_size + 2)
-        else:
-            data_read_buffer = com.read_all()
-    in_len = len(data_read_buffer)
-    if in_len == 0:
+    if not data_read_buffer:
         return
-    if not in_len % (read_size + 2) != 0:
-        if in_len > 2:
-            if in_len > read_size + 2:
-                data_want = data_read_buffer[in_len - (read_size + 2):]
-                in_len = read_size + 2
-            else:
-                data_want = data_read_buffer
-        else:
-            return
-    else:
-        data_want = data_read_buffer
-    try:
-        index_of_fc = data_want.index(252)
-    except ValueError:
-        return
-    if index_of_fc < in_len - 2:
-        start_fc_idx = index_of_fc + 2
-        arr_after_fc = data_want[start_fc_idx:]
-        len_arr_after_fc = len(arr_after_fc)
-        last_num = start_num + read_size - 1
-        for i in range(len_arr_after_fc):
-            idx = last_num - i
-            if idx < 0 or idx >= len(rect_position_arr):
-                break
-            coors = rect_position_arr[idx]
-            state_table[coors[0]][coors[1]] = arr_after_fc[i] == 10
 
-    if index_of_fc > 0:
-        arr_before_fc = data_want[:index_of_fc]
-        len_arr_before_fc = len(arr_before_fc)
-        for i in range(len_arr_before_fc):
-            try:
-                coors = rect_position_arr[i + start_num]
-                state_table[coors[0]][coors[1]] = arr_before_fc[len_arr_before_fc - i - 1] == 10
-            except:
-                logger.error("data_want:{}; len:{}", str(data_want), len(data_want))
-                logger.error("index_of_fc:{}", index_of_fc)
-                logger.error("arr_before_fc:{}, len:{}", str(arr_before_fc), len(arr_before_fc))
-                logger.error("rect_position_arr:{} len:{}", str(rect_position_arr), len(rect_position_arr))
-                logger.error("index in rect_position_arr {}, start_num:{} ", i + start_num, start_num)
-                break
+    buffer_key = id(com)
+    buffered = _sensor_read_buffers.get(buffer_key, b"") + bytes(data_read_buffer)
+    payloads, remainder, dropped = sensor_protocol.extract_frames(buffered, read_size)
+    _sensor_read_buffers[buffer_key] = remainder
+    if dropped:
+        _sensor_dropped_bytes += dropped
+        if _sensor_dropped_bytes == dropped or _sensor_dropped_bytes % 256 < dropped:
+            logger.warning(
+                "Sensor parser resynchronized after {} dropped byte(s) total",
+                _sensor_dropped_bytes,
+            )
+
+    if not payloads:
+        return
+
+    # A read can contain several snapshots; applying only the newest avoids
+    # replaying stale presses. Controller payload order is reversed within the
+    # configured COM tile range.
+    payload = payloads[-1]
+    try:
+        position_values = sensor_protocol.reversed_position_values(
+            payload,
+            start_num,
+            len(rect_position_arr),
+        )
+        for position_index, value in position_values:
+            row, col = rect_position_arr[position_index]
+            if 0 <= row < len(state_table) and 0 <= col < len(state_table[row]):
+                state_table[row][col] = value == 10
+    except IndexError as exc:
+        logger.warning("Invalid configured sensor range: {}", exc)
 
 
 def read_new_no_completed(com_obj, rst_arr, start_num, read_size=3, block=False):

@@ -154,6 +154,8 @@ def test_load_real_settings_exposes_layout_fields_for_prepare(monkeypatch):
     assert settings["grid_rows"] == 6
     assert settings["grid_cols"] == 33
     assert settings["floor_layout_coors_no_use"] == [(0, 3), (5, 3)]
+    # Onsite runtime filter stays populated from the same shelve coordinates.
+    assert settings["unused_cells"] == {(0, 3), (5, 3)}
     assert settings["wall_light"] is False
     assert settings["screen_light"] is False
     assert settings["corner_line_start"] == 0

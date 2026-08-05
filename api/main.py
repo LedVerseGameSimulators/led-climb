@@ -403,9 +403,7 @@ async def game_input(payload: dict):
     if game_id:
         game = game_manager.get_game(game_id)
     else:
-        for _gid, g in game_manager.games.items():
-            game = g
-            break
+        game = game_manager.get_active_game()
 
     if not game:
         return {"success": False, "error": "No active game"}
@@ -458,16 +456,16 @@ async def active_game():
     """Return the currently-running game (if any) with its full config so the
     frontend can resume the simulator after a page reload instead of starting
     over at login."""
-    for gid, g in game_manager.games.items():
-        if g.running and not g.get_state().get("game_over"):
-            return {
-                "success": True,
-                "game_id": gid,
-                "card_id": g.card_id,
-                "level": g.level,
-                "difficulty": g.difficulty,
-                "state": g.get_state(),
-            }
+    g = game_manager.get_active_game()
+    if g:
+        return {
+            "success": True,
+            "game_id": g.game_id,
+            "card_id": g.card_id,
+            "level": g.level,
+            "difficulty": g.difficulty,
+            "state": g.get_state(),
+        }
     return {"success": False}
 
 
@@ -513,13 +511,19 @@ async def hw_debug():
     """Live hardware loop diagnostics."""
     import os as _os
     games = []
-    for gid, g in game_manager.games.items():
+    for gid, g in game_manager.snapshot_games():
+        draw_count = getattr(g, "_hw_draw_count", 0)
+        total_io_ms = getattr(g, "_hw_io_total_ms", 0.0)
         games.append({
             "game_id": gid,
             "running": g.running,
             "score": getattr(g, "score", 0),
-            "hw_draw_count": getattr(g, "_hw_draw_count", 0),
+            "hw_draw_count": draw_count,
             "last_hw_draw": getattr(g, "_hw_last_draw", 0),
+            "hw_io_last_ms": round(getattr(g, "_hw_io_last_ms", 0.0), 2),
+            "hw_io_avg_ms": round(total_io_ms / draw_count, 2)
+                if draw_count else 0.0,
+            "hw_io_max_ms": round(getattr(g, "_hw_io_max_ms", 0.0), 2),
         })
     return {
         "use_serial_hd": _os.environ.get("USE_SERIAL_HD", "0") == "1",

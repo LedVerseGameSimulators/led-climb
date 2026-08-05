@@ -143,7 +143,7 @@
     <span id="sizeLabel">38</span>px
   </label>
   <label>Glow:
-    <input type="range" id="glowSlider" min="0" max="30" value="12" oninput="onGlowChange(this.value)">
+    <input type="range" id="glowSlider" min="0" max="30" value="0" oninput="onGlowChange(this.value)">
   </label>
   <button onclick="clearPressed()">Clear pressed</button>
   <button onclick="toggleGrid()">Toggle grid lines</button>
@@ -160,7 +160,7 @@ const WS_URL = `ws://${location.host}/ws${_gameId ? '?game_id=' + _gameId : ''}`
 let ROWS = 6, COLS = 33;
 let CELL = 38;          // square cell side (px)
 let GAP = 3;            // gap between cells
-let GLOW_AMOUNT = 12;
+let GLOW_AMOUNT = 0;
 let showGrid = true;
 let holdMode = false;
 
@@ -175,8 +175,12 @@ const ctx = canvas.getContext('2d');
 const tooltip = document.getElementById('tooltip');
 
 function resizeCanvas() {
-  canvas.width  = COLS * (CELL + GAP) + GAP + 20;
-  canvas.height = ROWS * (CELL + GAP) + GAP + 20;
+  const width = COLS * (CELL + GAP) + GAP + 20;
+  const height = ROWS * (CELL + GAP) + GAP + 20;
+  if (canvas.width === width && canvas.height === height) return false;
+  canvas.width = width;
+  canvas.height = height;
+  return true;
 }
 
 function cellTopLeft(row, col) {
@@ -254,7 +258,7 @@ function drawFrame() {
       }
 
       // Label at large sizes
-      if (CELL >= 34) {
+      if (CELL >= 50) {
         ctx.fillStyle = on ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.22)';
         ctx.font = `${Math.max(8, CELL * 0.24)}px monospace`;
         ctx.textAlign = 'center';
@@ -266,6 +270,16 @@ function drawFrame() {
 
   document.getElementById('stat-active').textContent = activeTiles;
   document.getElementById('stat-pressed').textContent = pressedCount;
+}
+
+let drawPending = false;
+function scheduleDraw() {
+  if (drawPending) return;
+  drawPending = true;
+  requestAnimationFrame(() => {
+    drawPending = false;
+    drawFrame();
+  });
 }
 
 function roundRect(x, y, w, h, r) {
@@ -297,7 +311,14 @@ function connect() {
         document.getElementById('stat-fps').textContent = msg.fps;
         document.getElementById('stat-grid').textContent = `${ROWS}×${COLS}`;
         resizeCanvas();
-        drawFrame();
+        scheduleDraw();
+        if (msg.state && window.parent !== window) {
+          window.parent.postMessage({
+            type: 'led-climb-state',
+            gameId: msg.game_id,
+            state: msg.state,
+          }, '*');
+        }
       }
     } catch (e) {}
   };

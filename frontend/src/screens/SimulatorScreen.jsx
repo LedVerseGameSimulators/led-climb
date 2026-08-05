@@ -28,8 +28,8 @@ export default function SimulatorScreen({ config, onGameEnd }) {
   const stateRef = useRef(null)
   // Audio: synth beeps via Web Audio (no asset files needed)
   const audioCtxRef = useRef(null)
-  const prevScoreRef = useRef(0)
   const prevLifeRef = useRef(null)
+  const lastInputEventSeqRef = useRef(null)
   const startedRef = useRef(false)
 
   const beep = (freq, durMs, type = 'sine', gain = 0.15) => {
@@ -38,6 +38,7 @@ export default function SimulatorScreen({ config, onGameEnd }) {
         audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)()
       }
       const ctx = audioCtxRef.current
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {})
       const osc = ctx.createOscillator()
       const g = ctx.createGain()
       osc.type = type
@@ -49,7 +50,7 @@ export default function SimulatorScreen({ config, onGameEnd }) {
       osc.stop(ctx.currentTime + durMs / 1000)
     } catch (e) { /* audio not available */ }
   }
-  const playScore = () => beep(880, 120, 'triangle', 0.18)   // bright ding
+  const playPress = () => beep(660, 70, 'triangle', 0.12)   // one cue per press edge
   const playHurt = () => beep(140, 220, 'sawtooth', 0.22)    // low buzz
 
   // Start game on mount (or resume an already-running game after reload)
@@ -150,34 +151,50 @@ export default function SimulatorScreen({ config, onGameEnd }) {
     })
   }
 
-  // Poll game state; auto-end on timeout/game_over
+  // Onsite path: iframe receives the bridge's single state stream and forwards
+  // telemetry via postMessage. Avoids a second overlapping HTTP poll loop and
+  // drives audio from input_events press edges (not score deltas).
   useEffect(() => {
     if (!gameId) return
-    const pollState = async () => {
-      try {
-        // Poll THIS game specifically (avoid stale "first active" game)
-        const response = await fetch(`${API_URL}/game-state/${gameId}`)
-        const data = await response.json()
-        if (data.success) {
-          const st = data.state
-          // Sound cues on score gain / life loss
-          if (st.score > prevScoreRef.current) playScore()
-          if (prevLifeRef.current !== null && st.life < prevLifeRef.current) playHurt()
-          prevScoreRef.current = st.score
-          prevLifeRef.current = st.life
+    const bridgeOrigin = new URL(WS_BRIDGE_URL).origin
+    const onBridgeState = (event) => {
+      if (event.origin !== bridgeOrigin) return
+      const message = event.data
+      if (message?.type !== 'led-climb-state') return
+      if (message.gameId && message.gameId !== gameId) return
+      const st = message.state
+      if (!st || typeof st !== 'object') return
 
-          setGameState(st)
-          stateRef.current = st
-          if (st.game_over && !endedRef.current) {
-            endGame('timeout')
+      const events = Array.isArray(st.input_events) ? st.input_events : []
+      const newestSeq = events.reduce(
+        (latest, inputEvent) => Math.max(latest, Number(inputEvent.seq) || 0),
+        0,
+      )
+      if (lastInputEventSeqRef.current === null) {
+        // Resume/reload: acknowledge retained history without replaying it.
+        lastInputEventSeqRef.current = newestSeq
+      } else {
+        const unseen = events.filter(
+          inputEvent => Number(inputEvent.seq) > lastInputEventSeqRef.current,
+        )
+        unseen.forEach((inputEvent, index) => {
+          if (inputEvent.type === 'press') {
+            window.setTimeout(playPress, Math.min(index, 10) * 30)
           }
+        })
+        if (newestSeq > lastInputEventSeqRef.current) {
+          lastInputEventSeqRef.current = newestSeq
         }
-      } catch (err) {
-        console.error('Poll error:', err)
       }
+
+      if (prevLifeRef.current !== null && st.life < prevLifeRef.current) playHurt()
+      prevLifeRef.current = st.life
+      setGameState(st)
+      stateRef.current = st
+      if (st.game_over && !endedRef.current) endGame('timeout')
     }
-    const interval = setInterval(pollState, 100)
-    return () => clearInterval(interval)
+    window.addEventListener('message', onBridgeState)
+    return () => window.removeEventListener('message', onBridgeState)
   }, [gameId])
 
   if (loading) {
@@ -224,6 +241,7 @@ export default function SimulatorScreen({ config, onGameEnd }) {
           </h2>
           <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
             {config.difficulty?.toUpperCase()}
+            {config.playMode === 'group' ? ' · GROUP' : ''}
           </span>
         </div>
 
@@ -251,7 +269,7 @@ export default function SimulatorScreen({ config, onGameEnd }) {
         <iframe
           ref={iframeRef}
           className={`simulator-iframe ${showSim ? '' : 'simulator-iframe--hidden'}`}
-          src={WS_BRIDGE_URL}
+          src={`${WS_BRIDGE_URL}?game_id=${encodeURIComponent(gameId)}`}
           title="Game Simulator"
         />
 

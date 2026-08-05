@@ -11,7 +11,8 @@ this before any on-site hardware session.
 ## 1. What hardware integration exists
 
 - **Grid:** 6 rows × 33 cols (square single-color tiles — not hex, no
-  concentric rings).
+  concentric rings). This venue's shelve marks logical rows 0 and 5 as
+  unused, leaving a 4×33 active physical floor (132 wired tiles).
 - **COM ports:** typically 3 serial ports (`list_com_info` in the
   `games/setting/led_parameter` shelve — one entry per port, format
   `['COM_name', start_idx, end_idx, normal_led]`). Confirm actual count
@@ -22,6 +23,10 @@ this before any on-site hardware session.
     serial hardware, unset/`"0"` = mocked (`serial`/`led`/`led.led_control`
     modules replaced with `MagicMock()` so the same code runs headless in
     dev/sim).
+  - `HW_COLOR_ORDER=RGB` — this Climb controller uses standard RGB. The
+    value remains configurable for replacement controllers.
+  - `HW_SERIAL_BLOCKING=0` — keeps three 0.3s serial timeouts from blocking
+    the game frame callback; set to `1` only for legacy diagnostics.
   - `_hw_init()` (`api/game_manager.py`) — on first use, reads
     `list_com_info`, `led_layout_type`, `floor_layout_coors_no_use`,
     `value_high`/`value_width` from the `led_parameter` shelve, then calls
@@ -103,13 +108,16 @@ Run through this on the real Climb floor before opening to players.
 - [ ] Start the API with `USE_SERIAL_HD=1` (see `ONSITE.md` Step 8).
       Confirm log line `Hardware ready: N port(s), 6×33, layout=X`.
 - [ ] Run `games/test_hardware.py` (`python test_hardware.py` from
-      `games/`). Confirm: all COM ports open OK, full 6×33 floor lights
-      **green** for 3s, stepping on tiles prints `PRESS detected: row=X
+      `games/`). Confirm: all COM ports open OK, active 4×33 physical floor
+      lights **green** for 3s (logical rows 0 and 5 stay black), stepping on tiles prints `PRESS detected: row=X
       col=Y`, floor clears to black at the end.
 
 **Grid mapping**
-- [ ] Spot-check the four corners: (row=0,col=0), (row=0,col=32),
-      (row=5,col=0), (row=5,col=32) — confirm each lights the physically
+- [ ] Confirm logical rows 0 and 5 remain black in the simulator and are
+      absent from the physical 4×33 active floor; this is expected, not a
+      failed 9×4 panel.
+- [ ] Spot-check the four active-floor corners: (row=1,col=0),
+      (row=1,col=32), (row=4,col=0), (row=4,col=32) — confirm each lights the physically
       correct corner tile, not a mirrored/rotated one.
 - [ ] Spot-check 3-4 interior cells (e.g. row=2/3, col=10/16/22) — confirm
       no off-by-one or serpentine-mapping drift between COM-port
