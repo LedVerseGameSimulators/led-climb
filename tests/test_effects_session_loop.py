@@ -257,16 +257,21 @@ def test_t2_countdown_after_mid_session_clear(client, tiny_two_level_sequence):
     assert _state(client, game_id).get("current_level") == "TINY2"
 
 
-def test_t3_level_fail_restart_same_level(client, fast_session):
+def test_t3_level_fail_restart_same_level(client):
+    # Must keep >10s on the clock so life=0 restarts (not session-end).
+    # Do not use fast_session here — that sets game_time_sec=8 and forces the ≤10s path.
     game_id = _start(client, level="A001")
     _wait_phase(client, game_id, "playing")
+    _wait_current_level(client, game_id, "A001")
     game = _game(game_id)
     level_before = game.current_level_id
     score_before = game.score
+    assert level_before == "A001"
     game.life = 0
     game._restart_level = True
     _force_level_end(game, restart=True)
     _poll_phases(client, game_id, ["level_fail", "countdown", "playing"])
+    _wait_current_level(client, game_id, "A001")
     game = _game(game_id)
     assert game.current_level_id == level_before
     assert game.score == score_before
