@@ -2,6 +2,7 @@
 
 Implementation plan for audio, countdown, level transitions, and LED wall behavior per:
 
+- [Locked decisions](../../docs/game-effects/LOCKED_DECISIONS.md) — **authoritative**
 - [Global rules](../../docs/game-effects/GLOBAL_RULES.md)
 - [Climb effects spec](./EFFECTS_SPEC.md)
 - [Effects flow diagram](./assets/climb-effects-flows.png)
@@ -23,31 +24,57 @@ Implementation plan for audio, countdown, level transitions, and LED wall behavi
 | 3 | **High (fixed)** | Static effect groups (`speed=0`) lose cells when `floor_layout_coors_no_use` is set (see `level_scaler.py` L378–379). | `EffectRunner` passes `floor_layout_coors_no_use=()` on prepare. |
 | 4 | **High (fixed)** | Life-restart path refills HP **before** fail/countdown in current code (L1755–1760); effects must run **first**. | Fail → stinger/hold → countdown → refill HP → replay. |
 | 5 | **Medium (noted)** | [EFFECTS_SPEC.md](./EFFECTS_SPEC.md) L98–104 — level-fail copy sits under **Timer expire**; missing `## Level fail` heading. | Added doc task D7; implementation follows diagram + global rules. |
-| 6 | **Medium (noted)** | Pre-session `CountdownScreen` will double-countdown level 1 unless removed. | Locked recommendation: remove (decision #1 below). |
+| 6 | **Medium (resolved)** | Pre-session `CountdownScreen` plus backend countdown on level 1. | **Locked:** both UI + floor countdown run; keep ~in sync via `phase` / `phase_step` (see [LOCKED_DECISIONS.md](../../docs/game-effects/LOCKED_DECISIONS.md) #4). |
 | 7 | **Low (verified)** | Code audit line refs, 6×33 layout, diagram three-wall countdown, and `_load_level_file` / `_run_level_attempt` reuse — all match repo. | No change. |
 
-### Human decisions (non-blocking)
+### Locked product decisions (2026-08-07)
 
-| # | Decision | Recommendation |
-|---|----------|----------------|
-| 1 | **Pre-session UI countdown** — remove vs keep as branding splash | **Remove** — backend `.led` countdown is single source of truth for floor + UI sync. |
-| 2 | **Transition stinger asset** | Stock ~2–3 s placeholder until final asset (per global rules). |
-| 3 | **BGM file path** | Confirm deployed `background_noise` filename under `games/audio/` before C1. |
-| 4 | **Last-level win** | Same blue clear panel as mid-session clear → stinger → black; **no** countdown, **no** separate win animation. |
+All items below are **locked** in [LOCKED_DECISIONS.md](../../docs/game-effects/LOCKED_DECISIONS.md). This plan must not contradict them.
+
+| # | Topic | Locked decision |
+|---|-------|-----------------|
+| 1 | Effects directory | `games/source/effects/` |
+| 2 | Effect files (exactly three) | `countdown.led`, `level_clear.led`, `level_fail.led` |
+| 3 | UI + floor countdown | **Both run**; keep approximately in sync (floor from backend `.led`; UI countdown stays) |
+| 4 | Transition stinger | **One shared** `games/audio/transition_stinger.mp3` for clear **and** fail (MVP) |
+| 5 | Audio helper | Per-game `api/audio_manager.py`, class `AudioManager` — non-blocking (no game-thread waits) |
+| 6 | Phase fields | On `/game-state`: at least `phase` + `accepting_input` (Climb frontend sync only; **no RFID changes**) |
+| 7 | Life=0 with ≤10 s left | **Session end:** `level_clear.led` → stinger → black; no fail panel; no countdown |
+| 8 | Last level cleared | **Session end:** `level_clear.led` → stinger → black; no countdown |
+| 9 | Timer expire | **Session end:** `level_clear.led` → stinger → black; no countdown |
+| 10 | Score SFX | Backend authoritative; mute frontend synth when backend audio active |
 
 ---
 
-## Locked decisions (this plan assumes)
+## Locked decisions (Climb-specific)
 
 | # | Decision |
 |---|----------|
 | 1 | **`.led` mini-levels** for countdown / clear / fail — loaded and played through the **same** `_load_level_file` → `prepare_level_for_platform` → `Play.running()` path as gameplay; wired into the marathon loop. |
-| 2 | **Timer expire = session end** — clear panel → ~2–3 s stinger → all LEDs black/off. **No countdown.** |
-| 3 | **Non-blocking audio** — never stall the game thread on mixer I/O. |
-| 4 | **Countdown every level start** — three-wall pattern: green digits on center wall, blue side panels shifting per spec/diagram. |
-| 5 | **Native 6×33 effect authoring** — effect `.led` archives authored at **6×33** (not 6×24) so digit glyphs and wall fills are not distorted by 24→33 scaling. |
+| 2 | **Native 6×33 effect authoring** — effect `.led` archives authored at **6×33** (not 6×24) so digit glyphs and wall fills are not distorted by 24→33 scaling. |
+| 3 | **Countdown every level start** — three-wall pattern: green digits on center wall, blue side panels shifting per spec/diagram. |
+| 4 | **Dual countdown** — backend `countdown.led` drives floor LEDs; UI overlay follows `phase` / `phase_step` (~sync, not duplicate timers). |
 
 EffectRunner must call `_prepare_level_attempt` (or equivalent) with **`floor_layout_coors_no_use=()`** so static groups are not stripped at platform edges.
+
+### Session flow (locked)
+
+```
+Every level start:
+  play(countdown.led) + UI countdown (~sync) → play(gameplay) + BGM
+
+Lives = 0 and >10 s left:
+  stop BGM → play(level_fail.led) + stinger → play(countdown.led) → restart same level
+
+Lives = 0 and ≤10 s left:
+  stop BGM → play(level_clear.led) + stinger → black → session end
+
+Level cleared (more levels remain):
+  stop BGM → play(level_clear.led) + stinger → play(countdown.led) → next level
+
+Timer expire OR last level cleared:
+  stop BGM → play(level_clear.led) + stinger → black → session end
+```
 
 ---
 
@@ -55,7 +82,7 @@ EffectRunner must call `_prepare_level_attempt` (or equivalent) with **`floor_la
 
 Headless Climb today runs a 5-minute **marathon** (`level_sequence` → `Play.running()` per level) with **no** interstitial effects: no per-level countdown, no clear/fail panels, no transition stingers, and no BGM policy. The React UI runs a **one-shot** pre-session countdown before `POST /start-game`, which does not repeat after level clear or fail.
 
-This plan adds three authored **6×33 `.led` effect archives** (`countdown`, `level_clear`, `level_fail`), a small **`EffectRunner`** wrapper around the existing level-attempt pipeline, a **session phase state machine** in `game_manager.py`, **non-blocking audio** (server thread + frontend Web Audio sync), and tests that lock timing, matrix coverage, and marathon wiring.
+This plan adds three authored **6×33 `.led` effect archives** under `games/source/effects/` (`countdown.led`, `level_clear.led`, `level_fail.led`), a small **`EffectRunner`** wrapper around the existing level-attempt pipeline, a **session phase state machine** in `game_manager.py`, **`AudioManager`** (non-blocking server thread + frontend Web Audio sync), and tests that lock timing, matrix coverage, and marathon wiring.
 
 ---
 
@@ -260,7 +287,7 @@ Climb “three walls” are **regions of the 6×33 floor matrix**, not separate 
     }, 1000)
 ```
 
-**Gap:** Per-level countdown must be **backend-driven** (`.led` on floor + shared phase/tick in game state). Pre-session UI countdown becomes optional cosmetic or is removed to avoid double-countdown on level 1.
+**Gap:** Per-level countdown must be **backend-driven** (`.led` on floor + shared phase/tick in game state). UI countdown **stays** and follows backend `phase` / `phase_step` for ~sync (locked decision #4).
 
 ### 7. Audio — mocked server-side; frontend synth only
 
@@ -303,7 +330,7 @@ When `life <= 0` but **>10 s** session time remains, the callback sets `_restart
                                 return False
 ```
 
-When `life <= 0` and **≤10 s** remain, session ends (`result=0`) — treat like session end (clear panel if mid-transition rules apply, then black; no countdown).
+When `life <= 0` and **≤10 s** remain, session ends (`result=0`) — **session end** path: `level_clear.led` → stinger → black; **no fail panel**, no countdown.
 
 ### 9. Spec doc note
 
@@ -333,11 +360,11 @@ Add `game.phase` (and mirror in `current_state`) for UI/audio sync:
 
 | Phase | When | LED | Audio | Next |
 |-------|------|-----|-------|------|
-| `countdown` | Before every level attempt (incl. first, post-clear, post-fail) | `effects/countdown.led` | Tick SFX; **no BGM** | `gameplay` |
-| `gameplay` | Active level | Game `.led` / `.ledb` | BGM on; score SFX | (level outcome) |
-| `level_clear` | All tiles cleared, time remains, more levels | `effects/level_clear.led` ~2.5 s | Stinger; **no BGM** | `countdown` |
-| `level_fail` | Lives exhausted, >10 s left | `effects/level_fail.led` ~2.5 s | Stinger; **no BGM** | `countdown` → replay same level |
-| `session_end` | Timer expired, out of life (≤10 s), last level cleared, sequence done, manual stop mid-session | `level_clear.led` ~2.5 s | Stinger at phase entry; **no BGM** | `black` |
+| `countdown` | Before every level attempt (incl. first, post-clear, post-fail) | `games/source/effects/countdown.led` | Tick SFX; **no BGM** | `gameplay` |
+| `gameplay` | Active level | Game `.led` / `.ledb` | BGM on; score SFX (backend authoritative) | (level outcome) |
+| `level_clear` | All tiles cleared, time remains, more levels | `games/source/effects/level_clear.led` ~2.5 s | Stinger; **no BGM** | `countdown` |
+| `level_fail` | Lives exhausted, >10 s left | `games/source/effects/level_fail.led` ~2.5 s | Stinger; **no BGM** | `countdown` → replay same level |
+| `session_end` | Timer expired, out of life (≤10 s), last level cleared, sequence done, manual stop mid-session | `games/source/effects/level_clear.led` ~2.5 s | Stinger at phase entry; **no BGM** | `black` |
 | `black` | Terminal | `_hw_blank_floor` / zero grid | Silence | `game_over` |
 
 **Hold timing:** The `.led` archive `end_time_sec` (≥ 2.5 s for clear/fail/session_end) is the **only** hold clock. Stinger plays once when the phase starts, concurrent with the LED pattern — no separate `sleep(2.5)`.
@@ -364,7 +391,7 @@ Suggested location: `api/effect_runner.py`.
 
 Responsibilities:
 
-1. Resolve effect paths from config (`GAMES_ROOT / "effects" / "{name}.led"`).
+1. Resolve effect paths from config (`GAMES_ROOT / "source/effects" / "{name}.led"`).
 2. Call `_run_level_attempt` with:
    - `_effect_frame_callback` — publish `led_display`, **no** scoring / life / level-clear detection.
    - `_effect_setup` — set `phase`, optional `phase_step` / `phase_elapsed`.
@@ -458,7 +485,7 @@ if game._session_over and not _session_end_played:
 # else: update game_over state (existing L1771–1795 logic, minus bare _hw_blank_floor)
 ```
 
-**First level of session:** Remove pre-session `CountdownScreen` — backend countdown after `start-game` is the single source of truth (see human decision #1).
+**First level of session:** Backend `countdown.led` runs after `start-game`; UI countdown overlay follows `phase` / `phase_step` (~sync with floor). Pre-session `CountdownScreen` may remain as branding splash but must not drift from backend clock on level 1 (locked dual-countdown rule).
 
 ### Game state fields (API / WebSocket)
 
@@ -467,11 +494,12 @@ Extend `current_state`:
 | Field | Type | Purpose |
 |-------|------|---------|
 | `phase` | string | `countdown` / `gameplay` / `level_clear` / `level_fail` / `session_end` / `black` |
+| `accepting_input` | bool | `true` only during `gameplay`; frontend disables taps otherwise |
 | `phase_step` | int \| null | 3, 2, 1, 0 (GO) during countdown |
 | `bgm_active` | bool | Frontend mutes/unmutes BGM |
 | `effect_name` | string \| null | Which `.led` is playing |
 
-Frontend subscribes via existing ws_bridge `state` blob; drives overlay countdown digits and audio from `phase` + `phase_step` instead of local timers.
+Frontend subscribes via existing ws_bridge `state` blob; drives overlay countdown digits and audio from `phase` + `phase_step` instead of local timers. **No RFID / score-submission changes.**
 
 ---
 
@@ -480,7 +508,7 @@ Frontend subscribes via existing ws_bridge `state` blob; drives overlay countdow
 ### Archive layout
 
 ```
-games/effects/
+games/source/effects/
   countdown.led      # timed 3-2-1-GO sequence (~3.6–4.4 s total)
   level_clear.led    # all walls solid blue, ≥2.5 s hold
   level_fail.led     # all walls solid red, ≥2.5 s hold
@@ -547,25 +575,30 @@ If the legacy LED table editor is available onsite, author at 6×33 with zone fu
 
 | Asset | Source | When |
 |-------|--------|------|
-| BGM | TRON *End of Line* (`background_noise` — locate under legacy `games/audio/` or ship `games/effects/audio/bgm_end_of_line.mp3`) | `phase == gameplay` only |
-| Positive SFX | Shared cross-game MP3 | Score gain (existing press path) |
-| Negative SFX | Shared cross-game MP3 | Life loss / hazard |
+| BGM | TRON *End of Line* (`background_noise` — locate under legacy `games/audio/`) | `phase == gameplay` only |
+| Positive SFX | Shared cross-game MP3 | Score gain (backend plays; frontend synth muted when backend active) |
+| Negative SFX | Shared cross-game MP3 | Life loss / hazard (backend plays; frontend synth muted when backend active) |
 | Countdown tick | Stock tick/noise | `phase == countdown`, steps 3/2/1 |
 | GO tick | Higher pitch / distinct cue | `phase_step == 0` |
-| Transition stinger | TBD stock (~2–3 s) | Start of `level_clear` / `level_fail` / `session_end` hold |
+| Transition stinger | **`games/audio/transition_stinger.mp3`** (one shared file for clear **and** fail) | Start of `level_clear` / `level_fail` / `session_end` hold |
 
-### Server-side (`api/audio_manager.py` — new)
+### Server-side (`api/audio_manager.py` — **locked**)
 
+Per [LOCKED_DECISIONS.md](../../docs/game-effects/LOCKED_DECISIONS.md) #6:
+
+- Class **`AudioManager`** in `api/audio_manager.py`.
 - Wrap `pygame.mixer` in a **dedicated daemon thread** with a command queue (`play_bgm`, `stop_bgm`, `play_sfx`, `play_stinger`).
 - Game / effect threads enqueue only — never call `mixer.music.load` inline.
 - When `USE_SERIAL_HD=0` and pygame mocked, no-op gracefully (same pattern as HW init).
 - **BGM policy:** `stop_bgm()` on any non-`gameplay` phase; `play_bgm(loop=-1)` on entering gameplay after countdown GO.
+- **Stinger:** load `games/audio/transition_stinger.mp3` once; reuse for clear, fail, and session end.
 
 ### Frontend (`SimulatorScreen.jsx`)
 
 - Prefer **mirroring server `phase`** for BGM mute/unmute (HTML5 `<audio loop>` for BGM file served from `/static/audio/...`).
-- Countdown ticks triggered by **`phase_step` changes** in ws state (not local `setInterval`).
-- Keep press/hurt synth or swap to shared MP3 — out of scope unless desired for parity.
+- Countdown ticks and overlay digits triggered by **`phase_step` changes** in ws state (not local `setInterval` during active session).
+- **Mute frontend synth** for score SFX when backend audio is active (locked decision #10).
+- Pre-session `CountdownScreen` may remain; once `SimulatorScreen` connects, UI countdown follows backend `phase` / `phase_step`.
 
 ### Sync rule
 
@@ -579,10 +612,10 @@ UI countdown digit and floor `.led` countdown must show the same step at the sam
 
 | ID | Task | Files |
 |----|------|-------|
-| A1 | Create `games/effects/` + author `countdown.led`, `level_clear.led`, `level_fail.led` at 6×33 | `games/effects/*.led` |
+| A1 | Create `games/source/effects/` + author `countdown.led`, `level_clear.led`, `level_fail.led` at 6×33 | `games/source/effects/*.led` |
 | A2 | Add `scripts/validate_effect_leds.py` | `scripts/` |
-| A3 | Add config constants `EFFECTS_DIR`, effect filenames | `api/config.py` |
-| A4 | Copy/link BGM + stinger + tick MP3s; document paths | `games/effects/audio/` or `frontend/public/audio/` |
+| A3 | Add config constants `EFFECTS_DIR` (`games/source/effects/`), effect filenames | `api/config.py` |
+| A4 | Copy/link BGM + `transition_stinger.mp3` + tick MP3s; document paths | `games/audio/`, `frontend/public/audio/` |
 
 ### Phase B — Backend effects engine
 
@@ -605,7 +638,7 @@ UI countdown digit and floor `.led` countdown must show the same step at the sam
 | C2 | Hook phase transitions → BGM start/stop | `api/game_manager.py`, `api/effect_runner.py` |
 | C3 | Stinger on clear/fail/session_end entry | same |
 | C4 | Frontend BGM + phase-synced ticks | `frontend/src/screens/SimulatorScreen.jsx` |
-| C5 | Remove or gate pre-session `CountdownScreen` | `frontend/src/App.jsx` |
+| C5 | Sync UI countdown to backend `phase` / `phase_step` (dual countdown); gate local timers during active session | `frontend/src/App.jsx`, `frontend/src/screens/SimulatorScreen.jsx`, `CountdownScreen.jsx` |
 
 ### Phase D — Tests & docs
 
@@ -668,7 +701,7 @@ python3 -m pytest tests/test_level_scaler.py tests/test_game_manager_level_scali
 | Risk | Mitigation |
 |------|------------|
 | Digit glyphs wrong after scaling | Author effects at native 6×33; validate with script |
-| Double countdown (UI + backend) on level 1 | Remove pre-session countdown (human decision #1) |
+| Double countdown drift (UI vs floor) | UI follows backend `phase_step`; backend is floor authority; tune `.led` step timing with sim recording |
 | Effect `.led` timeline drift vs 0.8 s steps | Export `phase_step` from backend; tune `end_time_sec` with sim recording |
 | pygame blocking game thread | AudioManager queue on separate thread |
 | Session timer elapses during effect | Effect callbacks check `session_elapsed`; abort to `_run_session_end()` |
@@ -680,19 +713,24 @@ python3 -m pytest tests/test_level_scaler.py tests/test_game_manager_level_scali
 
 ## Open questions (non-blocking)
 
-1. **Stinger asset** — final file TBD; stock placeholder OK per global rules (human decision #2).
-2. **Exact BGM file path** — confirm `background_noise` filename in deployed `games/audio/` tree (human decision #3).
-3. **Group mode marathon** — same effect paths apply; confirm `source_group/` levels use identical loop (yes, same `game_manager` path).
+1. **Exact BGM file path** — confirm `background_noise` filename in deployed `games/audio/` tree before C1.
+2. **Group mode marathon** — same effect paths apply; confirm `source_group/` levels use identical loop (yes, same `game_manager` path).
 
-Resolved in review:
+Resolved (locked in [LOCKED_DECISIONS.md](../../docs/game-effects/LOCKED_DECISIONS.md)):
 
-- **Pre-session UI countdown** → remove (human decision #1).
-- **Last-level win animation** → same clear-blue panel as mid-session; no separate win effect (human decision #4).
+- **Effects path** → `games/source/effects/` with exactly three files: `countdown.led`, `level_clear.led`, `level_fail.led`.
+- **UI + floor countdown** → both run; ~sync via `phase` / `phase_step`.
+- **Transition stinger** → `games/audio/transition_stinger.mp3` (shared for clear and fail).
+- **AudioManager** → `api/audio_manager.py`, non-blocking queue thread.
+- **Phase fields** → `phase` + `accepting_input` on `/game-state`.
+- **Session end** (timer, last level, life=0 ≤10 s) → `level_clear.led` → stinger → black; no countdown, no fail panel on ≤10 s path.
+- **Score SFX** → backend authoritative; mute frontend synth when backend active.
 
 ---
 
 ## References
 
+- [LOCKED_DECISIONS.md](../../docs/game-effects/LOCKED_DECISIONS.md) — **authoritative product locks**
 - [GLOBAL_RULES.md](../../docs/game-effects/GLOBAL_RULES.md)
 - [EFFECTS_SPEC.md](./EFFECTS_SPEC.md)
 - [LEVEL_SCALING.md](./LEVEL_SCALING.md)
