@@ -1675,7 +1675,7 @@ class GameManager:
                             grid_cols=led_table.led_col,
                             current_level=game.current_level_id,
                             levels_cleared=game.levels_cleared,
-                            phase="gameplay",
+                            phase="playing",
                             accepting_input=True,
                             bgm_active=True,
                             effect_name=None,

@@ -228,8 +228,8 @@ export default function SimulatorScreen({ config, onGameEnd }) {
   }
 
   const timeLeft = gameState?.time_left != null ? gameState.time_left : 300
-  const phase = gameState?.phase || 'gameplay'
-  const acceptingInput = gameState?.accepting_input !== false && phase === 'gameplay'
+  const phase = gameState?.phase || 'playing'
+  const acceptingInput = gameState?.accepting_input !== false && phase === 'playing'
   const countdownStep = gameState?.phase_step
   const showCountdownOverlay = phase === 'countdown' && countdownStep != null
   // Hearts: 5 shown (each absorbs a share of mistakes scaled to this game's own
@@ -296,8 +296,8 @@ export default function SimulatorScreen({ config, onGameEnd }) {
               <div className="hud-meta">
                 <span className="hud-level">Level {currentLevel}</span>
                 <span className="hud-diff">{config.difficulty?.toUpperCase()}</span>
-                <span className={`hud-status ${isOver ? 'ended' : phase === 'gameplay' ? 'playing' : 'transition'}`}>
-                  {isOver ? '● ENDED' : phase === 'gameplay' ? '● PLAYING' : `● ${phase.toUpperCase()}`}
+                <span className={`hud-status ${isOver ? 'ended' : phase === 'playing' ? 'playing' : 'transition'}`}>
+                  {isOver ? '● ENDED' : phase === 'playing' ? '● PLAYING' : `● ${phase.toUpperCase()}`}
                 </span>
               </div>
 

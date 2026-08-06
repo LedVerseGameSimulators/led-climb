@@ -179,7 +179,7 @@ class EffectRunner:
 
     def enter_gameplay(self) -> None:
         self.game.update_state(
-            phase="gameplay",
+            phase="playing",
             accepting_input=True,
             bgm_active=True,
             phase_step=None,

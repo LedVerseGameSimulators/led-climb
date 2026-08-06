@@ -187,7 +187,7 @@ def _force_level_end(game, *, cleared: bool = False, restart: bool = False, sess
 def test_t1_session_start_reaches_gameplay(client):
     game_id = _start(client)
     _wait_any_phase(client, game_id, ("countdown",))
-    st = _wait_phase(client, game_id, "gameplay")
+    st = _wait_phase(client, game_id, "playing")
     assert st["accepting_input"] is True
 
 
@@ -209,7 +209,7 @@ def test_t7_input_gated_during_countdown(client):
 
 def test_t8_gameplay_accepts_input(client):
     game_id = _start(client)
-    _wait_phase(client, game_id, "gameplay")
+    _wait_phase(client, game_id, "playing")
     game = _game(game_id)
     deadline = time.time() + 15.0
     target = None
@@ -245,10 +245,10 @@ def _wait_current_level(client, game_id, level_id, *, timeout=10.0):
 
 def test_t2_countdown_after_mid_session_clear(client, tiny_two_level_sequence):
     game_id = _start(client, level="TINY")
-    _wait_phase(client, game_id, "gameplay")
+    _wait_phase(client, game_id, "playing")
     _wait_current_level(client, game_id, "TINY")
     _force_level_end(_game(game_id), cleared=True)
-    _poll_phases(client, game_id, ["level_clear", "countdown", "gameplay"])
+    _poll_phases(client, game_id, ["level_clear", "countdown", "playing"])
     deadline = time.time() + 5.0
     while time.time() < deadline:
         if _state(client, game_id).get("current_level") == "TINY2":
@@ -259,14 +259,14 @@ def test_t2_countdown_after_mid_session_clear(client, tiny_two_level_sequence):
 
 def test_t3_level_fail_restart_same_level(client, fast_session):
     game_id = _start(client, level="A001")
-    _wait_phase(client, game_id, "gameplay")
+    _wait_phase(client, game_id, "playing")
     game = _game(game_id)
     level_before = game.current_level_id
     score_before = game.score
     game.life = 0
     game._restart_level = True
     _force_level_end(game, restart=True)
-    _poll_phases(client, game_id, ["level_fail", "countdown", "gameplay"])
+    _poll_phases(client, game_id, ["level_fail", "countdown", "playing"])
     game = _game(game_id)
     assert game.current_level_id == level_before
     assert game.score == score_before
@@ -277,7 +277,7 @@ def test_t4_session_end_on_timer_no_countdown(client, fast_session, monkeypatch)
     seq = [str(FIXTURE_LEVELS / "TINY.led")]
     monkeypatch.setattr("api.game_manager._build_level_sequence", lambda _s: seq)
     game_id = _start(client, level="TINY")
-    _wait_phase(client, game_id, "gameplay")
+    _wait_phase(client, game_id, "playing")
     game = _game(game_id)
     game.session_start = time.time() - game.game_time_sec - 1
     _force_level_end(game, session_over=True)
@@ -289,7 +289,7 @@ def test_t5_session_end_life_le_10s_no_fail_panel(client, fast_session, monkeypa
     seq = [str(FIXTURE_LEVELS / "TINY.led")]
     monkeypatch.setattr("api.game_manager._build_level_sequence", lambda _s: seq)
     game_id = _start(client, level="TINY")
-    _wait_phase(client, game_id, "gameplay")
+    _wait_phase(client, game_id, "playing")
     game = _game(game_id)
     game.session_start = time.time() - (game.game_time_sec - 5)
     game.life = 0
@@ -304,7 +304,7 @@ def test_t6_last_level_cleared_session_end(client, monkeypatch, fast_session):
     seq = [str(FIXTURE_LEVELS / "TINY.led")]
     monkeypatch.setattr("api.game_manager._build_level_sequence", lambda _s: seq)
     game_id = _start(client, level="TINY")
-    _wait_phase(client, game_id, "gameplay")
+    _wait_phase(client, game_id, "playing")
     _force_level_end(_game(game_id), cleared=True)
     seen = _poll_phases(client, game_id, ["black"])
     assert "countdown" not in seen
