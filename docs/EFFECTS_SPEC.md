@@ -95,13 +95,19 @@ Same LED treatment as **level clear** (all walls **blue**).
 2. All LEDs **black / off**
 3. **No countdown** — session is over
 
+Also applies when **last level cleared** with time remaining, or when **lives = 0** with **≤10 s** session time left (session end — no fail panel).
+
+---
+
+## Level fail (lives = 0, >10 s left)
+
 All three walls → solid **red**.
 
-Triggered when **all lives are lost**.
+Triggered when **all lives are lost** but more than 10 s remain on the session timer.
 
 1. Hold fail pattern ~2–3 s with transition stinger (not BGM)
 2. **Countdown** (3-2-1-GO sequence above)
-3. **Same level** restart play begins
+3. **Same level** restart play begins (score preserved, HP refilled)
 
 ---
 

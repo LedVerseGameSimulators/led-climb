@@ -23,9 +23,60 @@ Implementation plan for audio, countdown, level transitions, and LED wall behavi
 | 2 | **Blocker (fixed)** | Pseudocode used `await_hold(2.5)` **and** `.led` `end_time_sec ≥ 2.5` — double hold, drift risk. | `.led` timeline is the single hold authority; stinger fires once at phase entry (concurrent). |
 | 3 | **High (fixed)** | Static effect groups (`speed=0`) lose cells when `floor_layout_coors_no_use` is set (see `level_scaler.py` L378–379). | `EffectRunner` passes `floor_layout_coors_no_use=()` on prepare. |
 | 4 | **High (fixed)** | Life-restart path refills HP **before** fail/countdown in current code (L1755–1760); effects must run **first**. | Fail → stinger/hold → countdown → refill HP → replay. |
-| 5 | **Medium (noted)** | [EFFECTS_SPEC.md](./EFFECTS_SPEC.md) L98–104 — level-fail copy sits under **Timer expire**; missing `## Level fail` heading. | Added doc task D7; implementation follows diagram + global rules. |
+| 5 | **Medium (fixed)** | [EFFECTS_SPEC.md](./EFFECTS_SPEC.md) L98–104 — level-fail copy sat under **Timer expire**; missing `## Level fail` heading. | Restored `## Level fail` section; timer-expire bullets clarified (2026-08-07 gap pass). |
 | 6 | **Medium (resolved)** | Pre-session `CountdownScreen` plus backend countdown on level 1. | **Locked:** both UI + floor countdown run; keep ~in sync via `phase` / `phase_step` (see [LOCKED_DECISIONS.md](../../docs/game-effects/LOCKED_DECISIONS.md) #4). |
 | 7 | **Low (verified)** | Code audit line refs, 6×33 layout, diagram three-wall countdown, and `_load_level_file` / `_run_level_attempt` reuse — all match repo. | No change. |
+
+---
+
+## Gap analysis (2026-08-07)
+
+**Verdict:** **Ready for implementation** — plan aligns with [LOCKED_DECISIONS.md](../../docs/game-effects/LOCKED_DECISIONS.md); no open blockers or high-severity doc/code conflicts remain.
+
+### Severity summary
+
+| Severity | Open | Fixed / verified |
+|----------|------|------------------|
+| **Blocker** | 0 | 2 (session-end clear panel; double hold timing) |
+| **High** | 0 | 2 (`floor_layout_coors_no_use` strip; fail-before-refill order) |
+| **Medium** | 0 | 2 (EFFECTS_SPEC heading; dual countdown — locked #4) |
+| **Low** | 2 | 1 (code audit line refs) |
+
+### Locked-decisions alignment
+
+| # | Topic | Plan status |
+|---|-------|-------------|
+| 1 | Effects directory `games/source/effects/` | **Aligned** — all plan references use this path (no `games/effects/` drift) |
+| 2 | Three files: `countdown.led`, `level_clear.led`, `level_fail.led` | **Aligned** |
+| 4 | UI + floor countdown both run | **Aligned** — `phase` / `phase_step` sync |
+| 5 | Shared `games/audio/transition_stinger.mp3` | **Aligned** |
+| 6 | `api/audio_manager.py` / `AudioManager` | **Aligned** (not yet implemented) |
+| 7 | `phase` + `accepting_input` on `/game-state` | **Aligned** (not yet implemented) |
+| 8–9 | Session end paths (≤10 s life, last level, timer) | **Aligned** — `_run_session_end()` spec covers all |
+| 10 | Backend score SFX authoritative | **Aligned** |
+
+### Code spot-check (repo HEAD)
+
+| Check | Result |
+|-------|--------|
+| `level_scaler.py` L378–379 — static groups stripped when `speed=0` and `no_use` set | **Confirmed** — EffectRunner must pass `floor_layout_coors_no_use=()` |
+| `game_manager.py` L1347–1360 — life ≤10 s → `_session_over`; >10 s → `_restart_level` | **Confirmed** — matches locked session flow |
+| `game_manager.py` L1755–1760 — HP refill **before** replay loop continues | **Confirmed gap** — implementation must run fail → countdown → **then** refill |
+| `game_manager.py` L1797–1799 — bare `_hw_blank_floor` on session end | **Confirmed gap** — no clear panel today; `_run_session_end()` required |
+| `_load_level_file` / `_run_level_attempt` reusable for effects | **Confirmed** — L334–365, L467–499 |
+| `games/source/effects/` on disk | **Missing** — assets not authored yet (Phase A) |
+
+### Effects path audit
+
+All references in this plan and [EFFECTS_SPEC.md](./EFFECTS_SPEC.md) use `games/source/effects/`. No remaining `games/effects/` paths in Climb docs.
+
+### Remaining human opens (non-blocking)
+
+1. **Exact BGM filename** — locate deployed `background_noise` / TRON *End of Line* under `games/audio/` before Phase C.
+2. **6×33 digit glyph authoring** — bitmap design for center-wall 3/2/1/GO; reference media in `~/Downloads/Power Climb/`; optional Python generator vs hand editor.
+3. **Group-mode marathon** — confirm `source_group/` levels share the same `game_manager` loop (expected yes; verify on HW if group mode ships before effects).
+
+---
 
 ### Locked product decisions (2026-08-07)
 
@@ -334,7 +385,7 @@ When `life <= 0` and **≤10 s** remain, session ends (`result=0`) — **session
 
 ### 9. Spec doc note
 
-[EFFECTS_SPEC.md](./EFFECTS_SPEC.md) lines 98–104 (“All three walls → solid red…”) appear under the **Timer expire** heading but describe **level fail** — the `## Level fail` heading is missing. Implementation follows the diagram + locked decisions; fix the spec heading in task D7.
+[EFFECTS_SPEC.md](./EFFECTS_SPEC.md) previously had level-fail bullets under **Timer expire** without a `## Level fail` heading — **fixed** in gap analysis (2026-08-07). Implementation follows the diagram + locked decisions.
 
 ### 10. Session exit — no interstitial today
 
@@ -650,7 +701,7 @@ UI countdown digit and floor `.led` countdown must show the same step at the sam
 | D4 | Integration: fail restart path | same |
 | D5 | Integration: timeout → clear → black, **no** countdown | same |
 | D6 | Integration: last level cleared → clear → black, **no** countdown | same |
-| D7 | Fix EFFECTS_SPEC.md level-fail heading (L98–104 under wrong section) | `docs/EFFECTS_SPEC.md` |
+| D7 | ~~Fix EFFECTS_SPEC.md level-fail heading~~ — **done** (2026-08-07 gap pass) | `docs/EFFECTS_SPEC.md` |
 | D8 | Manual HW/sim checklist | `docs/EFFECTS_IMPLEMENTATION_PLAN.md` § Test plan |
 
 ---
