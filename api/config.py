@@ -22,6 +22,13 @@ GAME_GROUP_LEVEL_DIR = Path(
     os.getenv("GAMES_GROUP_LEVEL_DIR", str(GAME_DIR / "source_group"))
 )
 GAME_SETTING_DIR = GAME_DIR / "setting"
+EFFECTS_DIR = Path(
+    os.getenv("CLIMB_EFFECTS_DIR", str(GAME_LEVEL_DIR / "effects"))
+)
+EFFECT_FILES = ("countdown.led", "level_clear.led", "level_fail.led")
+AUDIO_DIR = GAME_DIR / "audio"
+TRANSITION_STINGER = AUDIO_DIR / "transition_stinger.mp3"
+BGM_TRACK = AUDIO_DIR / "background_noise.mp3"
 
 # Add game source to path for imports
 if str(GAME_SOURCE_DIR) not in sys.path:

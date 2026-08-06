@@ -22,6 +22,8 @@ from .config import (
     GAME_GROUP_LEVEL_DIR,
 )
 from .level_scaler import prepare_level_for_platform
+from .audio_manager import AudioManager
+from .effect_runner import EffectRunner
 
 USE_SERIAL_HD = os.environ.get("USE_SERIAL_HD", "0") == "1"
 if USE_SERIAL_HD:
@@ -478,7 +480,9 @@ def _load_level_file(path):
                 if not any(f.startswith("game_file") for f in files):
                     continue
                 gf = os.path.join(root, "game_file")
-                if not os.path.exists(gf + ".dat"):
+                if not (
+                    os.path.exists(gf + ".dat") or os.path.exists(gf + ".db")
+                ):
                     continue
                 try:
                     db = shelve.open(gf)
@@ -790,6 +794,7 @@ class GameInstance:
         self._restart_level = False    # True -> replay same level (life=0, time left)
         self._no_reachable_goal_since = None
         self._end_reason = None        # why the marathon loop exited (timeout/None)
+        self._session_end_played = False
 
         self.current_state = {
             "score": 0,
@@ -811,7 +816,13 @@ class GameInstance:
             "current_level": None,
             "levels_cleared": 0,
             "started_at": "",
+            "phase": "idle",
+            "accepting_input": False,
+            "phase_step": None,
+            "bgm_active": False,
+            "effect_name": None,
         }
+        self.audio = AudioManager()
         self.unused_cells = set(_s.get("unused_cells", set()))
         self._input_event_seq = 0
         self._input_events = []
@@ -1025,6 +1036,8 @@ class GameInstance:
         Simulator presses are tracked separately from physical sensors, then
         merged into the effective state table so a hardware read cannot erase
         a held mouse/touch press."""
+        if not self.current_state.get("accepting_input", False):
+            return False
         if self.led_table is None:
             return False
         if not self.is_active_cell(row, col):
@@ -1662,6 +1675,11 @@ class GameManager:
                             grid_cols=led_table.led_col,
                             current_level=game.current_level_id,
                             levels_cleared=game.levels_cleared,
+                            phase="gameplay",
+                            accepting_input=True,
+                            bgm_active=True,
+                            effect_name=None,
+                            phase_step=None,
                         )
 
                         frame_counter["n"] += 1
@@ -1691,16 +1709,34 @@ class GameManager:
                     return
 
                 play.callback = _frame_callback
-                for lvl_path in game.level_sequence:
+                effect_runner = EffectRunner(
+                    game,
+                    play,
+                    led_table,
+                    _s,
+                    game.audio,
+                    blank_floor=_hw_blank_floor,
+                )
+
+                def _finish_session():
+                    if not game._session_end_played:
+                        effect_runner.run_session_end()
+
+                for lvl_idx, lvl_path in enumerate(game.level_sequence):
                     if game._session_over or not game.running:
                         break
                     session_elapsed = time.time() - game.session_start
                     if session_elapsed > game.game_time_sec:
                         game._session_over = True
                         game._end_reason = "timeout"
+                        _finish_session()
                         break
 
                     lvl_id = os.path.basename(lvl_path).rsplit(".", 1)[0]
+
+                    if not effect_runner.run("countdown"):
+                        break
+                    effect_runner.enter_gameplay()
 
                     # ── RESTART LOOP: replay this level whenever lives hit 0 with
                     #    >10s left (score persists, HP refills). Exits on level
@@ -1714,6 +1750,7 @@ class GameManager:
                             def _play_level(dg):
                                 play.running_state = True
                                 play.total_pass = 0
+                                play.callback = _frame_callback
                                 play.running(dg)
 
                             def _setup_attempt(groups, game_obj):
@@ -1750,10 +1787,18 @@ class GameManager:
                             break
 
                         if game._session_over:
+                            _finish_session()
                             break
 
                         if game._restart_level:
-                            # life=0 with time remaining — refill HP, replay level
+                            game._restart_level = False
+                            effect_runner.run("level_fail", play_stinger=True)
+                            if game._session_over or not game.running:
+                                break
+                            effect_runner.run("countdown")
+                            if game._session_over or not game.running:
+                                break
+                            effect_runner.enter_gameplay()
                             game.life = game.max_life
                             game.last_life_loss_time = 0.0
                             logger.info(f"↻ Life restart: level={lvl_id}, score={game.score}")
@@ -1763,10 +1808,20 @@ class GameManager:
                             game.levels_cleared += 1
                             logger.info(f"✓ Level {lvl_id} cleared "
                                         f"(total cleared={game.levels_cleared})")
+                            session_elapsed = time.time() - game.session_start
+                            more_levels = lvl_idx < len(game.level_sequence) - 1
+                            if more_levels and session_elapsed < game.game_time_sec:
+                                effect_runner.run("level_clear", play_stinger=True)
+                            else:
+                                game._session_over = True
+                                _finish_session()
                         break
 
                     if game._session_over:
                         break
+
+                if game._session_over and not game._session_end_played:
+                    _finish_session()
 
                 # Session finished (timer/lives/sequence end).
                 game._session_over = True
@@ -1794,9 +1849,8 @@ class GameManager:
                                   levels_cleared=game.levels_cleared,
                                   final_score=final_score, final_score2=final_score2)
                 game.running = False
-                # Session over (timer/lives/sequence end) — blank the
-                # physical floor; nothing else will draw to it now.
-                _hw_blank_floor(led_table)
+                if not game._session_end_played:
+                    _hw_blank_floor(led_table)
 
             except Exception as e:
                 import traceback
