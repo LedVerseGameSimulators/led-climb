@@ -50,8 +50,14 @@ export default function SimulatorScreen({ config, onGameEnd }) {
       osc.stop(ctx.currentTime + durMs / 1000)
     } catch (e) { /* audio not available */ }
   }
-  const playPress = () => beep(660, 70, 'triangle', 0.12)   // one cue per press edge
-  const playHurt = () => beep(140, 220, 'sawtooth', 0.22)    // low buzz
+  const playPress = () => {
+    if (stateRef.current?.bgm_active) return
+    beep(660, 70, 'triangle', 0.12)
+  }
+  const playHurt = () => {
+    if (stateRef.current?.bgm_active) return
+    beep(140, 220, 'sawtooth', 0.22)
+  }
 
   // Start game on mount (or resume an already-running game after reload)
   useEffect(() => {
@@ -222,6 +228,10 @@ export default function SimulatorScreen({ config, onGameEnd }) {
   }
 
   const timeLeft = gameState?.time_left != null ? gameState.time_left : 300
+  const phase = gameState?.phase || 'gameplay'
+  const acceptingInput = gameState?.accepting_input !== false && phase === 'gameplay'
+  const countdownStep = gameState?.phase_step
+  const showCountdownOverlay = phase === 'countdown' && countdownStep != null
   // Hearts: 5 shown (each absorbs a share of mistakes scaled to this game's own
   // max_life). Backend sends display_lives/display_max; fall back to raw HP.
   const life = gameState?.display_lives ?? gameState?.life ?? gameState?.max_life ?? 0
@@ -275,12 +285,19 @@ export default function SimulatorScreen({ config, onGameEnd }) {
 
         {!showSim && (
           <div className="play-hud">
+            {showCountdownOverlay && (
+              <div className="countdown-overlay" aria-live="polite">
+                <div className={`countdown-num${countdownStep === 0 ? ' go' : ''}`}>
+                  {countdownStep === 0 ? 'GO!' : countdownStep}
+                </div>
+              </div>
+            )}
             <div className="hud-board">
               <div className="hud-meta">
                 <span className="hud-level">Level {currentLevel}</span>
                 <span className="hud-diff">{config.difficulty?.toUpperCase()}</span>
-                <span className={`hud-status ${isOver ? 'ended' : 'playing'}`}>
-                  {isOver ? '● ENDED' : '● PLAYING'}
+                <span className={`hud-status ${isOver ? 'ended' : phase === 'gameplay' ? 'playing' : 'transition'}`}>
+                  {isOver ? '● ENDED' : phase === 'gameplay' ? '● PLAYING' : `● ${phase.toUpperCase()}`}
                 </span>
               </div>
 
