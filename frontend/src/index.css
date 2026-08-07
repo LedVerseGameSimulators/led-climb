@@ -599,6 +599,77 @@ button:disabled {
   pointer-events: none;
 }
 
+/* Phase overlays on stable stage (visible in sim + HUD modes) */
+.phase-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(7, 7, 13, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.countdown-overlay .countdown-num {
+  font-size: clamp(4rem, 18vw, 8rem);
+}
+
+.level-clear-overlay {
+  font-size: clamp(2rem, 8vw, 3.5rem);
+  font-weight: 800;
+  color: var(--brand-cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.level-fail-overlay {
+  font-size: clamp(2rem, 8vw, 3.5rem);
+  font-weight: 800;
+  color: var(--color-error);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.boot-banner {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(7, 7, 13, 0.72);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.boot-banner-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.boot-banner-sub {
+  margin-top: 8px;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+}
+
+.play-hud--locked {
+  pointer-events: none;
+}
+
+.sim-input-lock {
+  padding: 8px 16px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-subtle);
+}
+
 .game-info {
   display: flex;
   gap: 12px;

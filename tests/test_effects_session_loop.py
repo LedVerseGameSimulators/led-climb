@@ -313,3 +313,33 @@ def test_t6_last_level_cleared_session_end(client, monkeypatch, fast_session):
     _force_level_end(_game(game_id), cleared=True)
     seen = _poll_phases(client, game_id, ["black"])
     assert "countdown" not in seen
+
+
+def test_cs1_countdown_phase_step_sequence(client):
+    """CS1: single contiguous countdown with monotonic phase_step 3→2→1→0."""
+    game_id = _start(client)
+    _wait_any_phase(client, game_id, ("countdown",))
+    steps: list[int] = []
+    deadline = time.time() + 8.0
+    while time.time() < deadline:
+        st = _state(client, game_id)
+        phase = st.get("phase")
+        if phase == "countdown":
+            step = st.get("phase_step")
+            if step is not None and (not steps or steps[-1] != step):
+                steps.append(step)
+        elif phase == "playing":
+            break
+        time.sleep(0.05)
+    assert steps, "expected phase_step samples during countdown"
+    assert steps[0] == 3
+    assert set(steps).issuperset({3, 2, 1})
+
+
+def test_cs2_phase_step_on_countdown_entry(client):
+    """CS2: sync field populated immediately when countdown starts."""
+    game_id = _start(client)
+    st = _wait_any_phase(client, game_id, ("countdown",))
+    assert st.get("phase") == "countdown"
+    assert st.get("phase_step") is not None
+    assert st.get("phase_step") == 3

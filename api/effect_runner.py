@@ -129,6 +129,7 @@ class EffectRunner:
             accepting_input=False,
             bgm_active=False,
             effect_name=effect_name,
+            phase_step=3 if effect_name == "countdown" else None,
         )
 
         rows = self.led_table.led_row

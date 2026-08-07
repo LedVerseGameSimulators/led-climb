@@ -2,8 +2,24 @@ import { useEffect, useState, useRef } from 'react'
 
 import { API_URL, WS_BRIDGE_URL } from '../config'
 
+function countdownDisplay(state) {
+  if (state?.phase !== 'countdown') return null
+  const step = state.phase_step
+  if (step === 0) return 'GO!'
+  return step != null ? String(step) : null
+}
+
+function isInputBlocked(state) {
+  if (!state) return true
+  if (state.accepting_input === false) return true
+  return state.phase && state.phase !== 'playing'
+}
+
+function showPhaseOverlay(state) {
+  return ['countdown', 'level_clear', 'level_fail'].includes(state?.phase)
+}
+
 function HeartRow({ life, maxLife }) {
-  // Cap visual hearts (backend display_max is typically 5)
   const total = Math.max(1, Math.min(10, Math.round(maxLife) || 5))
   const filled = Math.max(0, Math.min(total, Math.round(life)))
   return (
@@ -19,6 +35,7 @@ export default function SimulatorScreen({ config, onGameEnd }) {
   const [gameState, setGameState] = useState(null)
   const [gameId, setGameId] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [phaseReady, setPhaseReady] = useState(false)
   const [error, setError] = useState(null)
   const [stopping, setStopping] = useState(false)
   const [showSim, setShowSim] = useState(false)
@@ -26,7 +43,6 @@ export default function SimulatorScreen({ config, onGameEnd }) {
   const gameIdRef = useRef(null)
   const endedRef = useRef(false)
   const stateRef = useRef(null)
-  // Audio: synth beeps via Web Audio (no asset files needed)
   const audioCtxRef = useRef(null)
   const prevLifeRef = useRef(null)
   const lastInputEventSeqRef = useRef(null)
@@ -59,11 +75,17 @@ export default function SimulatorScreen({ config, onGameEnd }) {
     beep(140, 220, 'sawtooth', 0.22)
   }
 
+  const applyState = (st) => {
+    if (!st || typeof st !== 'object') return
+    setGameState(st)
+    stateRef.current = st
+    if (st.phase) setPhaseReady(true)
+  }
+
   // Start game on mount (or resume an already-running game after reload)
   useEffect(() => {
     if (startedRef.current) return
     startedRef.current = true
-    // Resuming: backend game already exists, don't start a new one.
     if (config.resumeGameId) {
       setGameId(config.resumeGameId)
       gameIdRef.current = config.resumeGameId
@@ -97,6 +119,33 @@ export default function SimulatorScreen({ config, onGameEnd }) {
     startGame()
   }, [config])
 
+  // Soft boot: show simulator after gameId; wait for first phase poll or 2 s timeout
+  useEffect(() => {
+    if (!gameId) return undefined
+    const timeout = window.setTimeout(() => setPhaseReady(true), 2000)
+    return () => window.clearTimeout(timeout)
+  }, [gameId])
+
+  // Poll game-state for phase overlay sync (~100 ms)
+  useEffect(() => {
+    if (!gameId) return undefined
+    const pollState = async () => {
+      try {
+        const response = await fetch(`${API_URL}/game-state/${gameId}`)
+        const data = await response.json()
+        if (data.success) {
+          applyState(data.state)
+          if (data.state?.game_over && !endedRef.current) endGame('timeout')
+        }
+      } catch (err) {
+        console.error('Poll error:', err)
+      }
+    }
+    pollState()
+    const interval = window.setInterval(pollState, 100)
+    return () => window.clearInterval(interval)
+  }, [gameId])
+
   // End the game: stop on backend, record, route to result panel
   const endGame = async (reason) => {
     if (endedRef.current) return
@@ -109,28 +158,26 @@ export default function SimulatorScreen({ config, onGameEnd }) {
     const finalMultiplayer = st.multiplayer || false
     const finalTime = st.time_elapsed || 0
     const finalLife = st.life ?? 0
-    // out_of_life beats the passed reason (game ended because HP hit 0)
     const finalReason = st.game_over_reason === 'out_of_life'
       ? 'out_of_life' : (reason || 'stopped')
     try {
-      // Persist score to leaderboard
       await fetch(`${API_URL}/save-score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           card_id: config.cardId,
           card_id2: config.cardId2 || null,
-          level: config.level,                       // starting level picked
-          end_level: st.current_level ?? config.level, // level ended on
-          score: finalScore,                         // raw P1 (on-screen)
-          score2: finalScore2,                       // raw P2 (on-screen)
-          final_score: st.final_score ?? finalScore,   // normalized P1
-          final_score2: st.final_score2 ?? finalScore2,// normalized P2
+          level: config.level,
+          end_level: st.current_level ?? config.level,
+          score: finalScore,
+          score2: finalScore2,
+          final_score: st.final_score ?? finalScore,
+          final_score2: st.final_score2 ?? finalScore2,
           multiplayer: finalMultiplayer,
           life: finalLife,
           lives_start: st.max_life ?? 0,
           result: st.result ?? null,
-          time_used: finalTime,                      // full session duration
+          time_used: finalTime,
           levels_cleared: st.levels_cleared ?? 0,
           difficulty: config.difficulty ?? '',
           started_at: st.started_at ?? ''
@@ -157,11 +204,9 @@ export default function SimulatorScreen({ config, onGameEnd }) {
     })
   }
 
-  // Onsite path: iframe receives the bridge's single state stream and forwards
-  // telemetry via postMessage. Avoids a second overlapping HTTP poll loop and
-  // drives audio from input_events press edges (not score deltas).
+  // Bridge: input-event audio cues (press edges)
   useEffect(() => {
-    if (!gameId) return
+    if (!gameId) return undefined
     const bridgeOrigin = new URL(WS_BRIDGE_URL).origin
     const onBridgeState = (event) => {
       if (event.origin !== bridgeOrigin) return
@@ -177,7 +222,6 @@ export default function SimulatorScreen({ config, onGameEnd }) {
         0,
       )
       if (lastInputEventSeqRef.current === null) {
-        // Resume/reload: acknowledge retained history without replaying it.
         lastInputEventSeqRef.current = newestSeq
       } else {
         const unseen = events.filter(
@@ -195,8 +239,7 @@ export default function SimulatorScreen({ config, onGameEnd }) {
 
       if (prevLifeRef.current !== null && st.life < prevLifeRef.current) playHurt()
       prevLifeRef.current = st.life
-      setGameState(st)
-      stateRef.current = st
+      applyState(st)
       if (st.game_over && !endedRef.current) endGame('timeout')
     }
     window.addEventListener('message', onBridgeState)
@@ -229,11 +272,9 @@ export default function SimulatorScreen({ config, onGameEnd }) {
 
   const timeLeft = gameState?.time_left != null ? gameState.time_left : 300
   const phase = gameState?.phase || 'playing'
-  const acceptingInput = gameState?.accepting_input !== false && phase === 'playing'
-  const countdownStep = gameState?.phase_step
-  const showCountdownOverlay = phase === 'countdown' && countdownStep != null
-  // Hearts: 5 shown (each absorbs a share of mistakes scaled to this game's own
-  // max_life). Backend sends display_lives/display_max; fall back to raw HP.
+  const inputLocked = isInputBlocked(gameState)
+  const countdownLabel = countdownDisplay(gameState)
+  const overlayVisible = showPhaseOverlay(gameState)
   const life = gameState?.display_lives ?? gameState?.life ?? gameState?.max_life ?? 0
   const maxLife = gameState?.display_max ?? gameState?.max_life ?? 5
   const isOver = gameState?.game_over
@@ -274,7 +315,6 @@ export default function SimulatorScreen({ config, onGameEnd }) {
         </div>
       </div>
 
-      {/* Stable stage: iframe always full-size; HUD overlays on top */}
       <div className="simulator-stage">
         <iframe
           ref={iframeRef}
@@ -283,15 +323,38 @@ export default function SimulatorScreen({ config, onGameEnd }) {
           title="Game Simulator"
         />
 
+        {!phaseReady && (
+          <div className="boot-banner" aria-live="polite">
+            <p className="boot-banner-title">Starting Game…</p>
+            <p className="boot-banner-sub">
+              {config.game.toUpperCase()} · Level {config.level}
+            </p>
+          </div>
+        )}
+
+        {overlayVisible && !isOver && phase === 'countdown' && countdownLabel && (
+          <div className="phase-overlay countdown-overlay" aria-live="polite">
+            <div className={`countdown-num${gameState?.phase_step === 0 ? ' go' : ''}`}>
+              {countdownLabel}
+            </div>
+            <p className="countdown-meta">Level {currentLevel}</p>
+          </div>
+        )}
+
+        {overlayVisible && !isOver && phase === 'level_clear' && (
+          <div className="phase-overlay level-clear-overlay" aria-live="polite">
+            Level clear!
+          </div>
+        )}
+
+        {overlayVisible && !isOver && phase === 'level_fail' && (
+          <div className="phase-overlay level-fail-overlay" aria-live="polite">
+            Try again!
+          </div>
+        )}
+
         {!showSim && (
-          <div className="play-hud">
-            {showCountdownOverlay && (
-              <div className="countdown-overlay" aria-live="polite">
-                <div className={`countdown-num${countdownStep === 0 ? ' go' : ''}`}>
-                  {countdownStep === 0 ? 'GO!' : countdownStep}
-                </div>
-              </div>
-            )}
+          <div className={`play-hud${inputLocked ? ' play-hud--locked' : ''}`}>
             <div className="hud-board">
               <div className="hud-meta">
                 <span className="hud-level">Level {currentLevel}</span>
@@ -373,6 +436,12 @@ export default function SimulatorScreen({ config, onGameEnd }) {
                 : ''}
             </span>
           )}
+        </div>
+      )}
+
+      {showSim && inputLocked && !isOver && (
+        <div className="sim-input-lock" aria-hidden="true">
+          Input paused ({phase})
         </div>
       )}
 
