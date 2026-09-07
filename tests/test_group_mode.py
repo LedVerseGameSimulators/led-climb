@@ -10,23 +10,24 @@ from api import game_manager
 ROOT = Path(__file__).resolve().parents[1]
 GROUP_ROOT = ROOT / "games" / "source_group"
 
+EXPECTED = [f"B{i:02d}" for i in range(1, 11)]
 
-def test_group_sequence_auto_starts_at_first_seed_level():
+
+def test_group_sequence_auto_is_corporate_b_series():
     seq = game_manager._build_group_level_sequence("auto")
-    assert seq, "expected seeded source_group playlist"
+    assert seq, "expected corporate source_group playlist"
     assert all("source_group" in p.replace("\\", "/") for p in seq)
     stems = [os.path.basename(p).rsplit(".", 1)[0] for p in seq]
-    assert stems[0] == "A001"
-    assert "A002" in stems and "A003" in stems
-    assert any(s.startswith("B") for s in stems)
+    assert stems == EXPECTED
 
 
 def test_group_sequence_can_start_mid_playlist():
-    seq = game_manager._build_group_level_sequence("A003")
+    seq = game_manager._build_group_level_sequence("B03")
     stems = [os.path.basename(p).rsplit(".", 1)[0] for p in seq]
-    assert stems[0] == "A003"
-    assert "A001" not in stems
-    assert "A002" not in stems
+    assert stems[0] == "B03"
+    assert "B01" not in stems
+    assert "B02" not in stems
+    assert stems[-1] == "B10"
 
 
 def test_create_game_group_mode_is_single_player():
