@@ -10,7 +10,14 @@ from typing import Optional
 
 from loguru import logger
 
-from .config import AUDIO_DIR, BGM_TRACK, TRANSITION_STINGER
+from .config import (
+    AUDIO_DIR,
+    BGM_TRACK,
+    TRANSITION_STINGER,
+    SCORE_POSITIVE,
+    SCORE_NEGATIVE,
+    COUNTDOWN_TICK,
+)
 
 USE_SERIAL_HD = os.environ.get("USE_SERIAL_HD", "0") == "1"
 

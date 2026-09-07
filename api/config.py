@@ -29,6 +29,9 @@ EFFECT_FILES = ("countdown.led", "level_clear.led", "level_fail.led")
 AUDIO_DIR = GAME_DIR / "audio"
 TRANSITION_STINGER = AUDIO_DIR / "transition_stinger.mp3"
 BGM_TRACK = AUDIO_DIR / "background_noise.mp3"
+SCORE_POSITIVE = AUDIO_DIR / "score_positive.mp3"
+SCORE_NEGATIVE = AUDIO_DIR / "score_negative.mp3"
+COUNTDOWN_TICK = AUDIO_DIR / "countdown_tick.mp3"
 
 # Add game source to path for imports
 if str(GAME_SOURCE_DIR) not in sys.path:
