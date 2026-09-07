@@ -17,3 +17,4 @@ for path in (REPO_ROOT, GAMES_ROOT):
 os.environ["USE_SERIAL_HD"] = "0"
 os.environ["SDL_VIDEODRIVER"] = "dummy"
 os.environ["SDL_AUDIODRIVER"] = "dummy"
+os.environ.setdefault("CLIMB_AUDIO_DISABLED", "1")

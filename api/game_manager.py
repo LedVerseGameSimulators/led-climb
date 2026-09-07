@@ -72,11 +72,7 @@ mocks = {
     }),
     'net': MagicMock(),
     'socket': MagicMock(),
-    # Audio/Video
-    'pygame': MagicMock(),
-    'pygame.mixer': MagicMock(),
-    'audio_play': MagicMock(),
-    'audio_play.audio': MagicMock(),
+    # Audio/Video — do NOT mock pygame/audio_play (venue BGM/SFX need real mixer)
     'moviepy': MagicMock(),
     'moviepy.editor': MagicMock(),
     'cv2': MagicMock(),
@@ -591,7 +587,7 @@ class HeadlessLedTable:
                 self.led_table[r][c] = [0, 0, 0]
         for i in range(len(self._wall_light_arr)):
             self._wall_light_arr[i] = [0, 0, 0]
-        self._wall_screen_arr = [0] * wall_light_arr_len
+        self._wall_screen_arr = [0] * len(self._wall_light_arr)
 
     def screen_mouse_click_state_get(self):
         pass
@@ -1581,10 +1577,22 @@ class GameManager:
                             active_consumables = goal_cells | goal2_cells | deduct_cells
                             game.scored_active &= active_consumables
                             game.scored_active2 &= goal2_cells
+                            prev_score = game.score
+                            prev_score2 = game.score2
+                            prev_life = game.life
                             for i in range(led_table.led_row):
                                 for j in range(led_table.led_col):
                                     if state[i][j]:
                                         game.try_score_cell(i, j)
+                            if game.audio.backend_active:
+                                if game.score > prev_score or game.score2 > prev_score2:
+                                    game.audio.play_score_positive()
+                                elif (
+                                    game.score < prev_score
+                                    or game.score2 < prev_score2
+                                    or game.life < prev_life
+                                ):
+                                    game.audio.play_score_negative()
 
                         # 2) Build display buffer from the PRIORITY winner map so
                         #    overlapping cells render the WINNING color (green >
@@ -1677,7 +1685,7 @@ class GameManager:
                             levels_cleared=game.levels_cleared,
                             phase="playing",
                             accepting_input=True,
-                            bgm_active=True,
+                            bgm_active=bool(getattr(game.audio, "backend_active", False)),
                             effect_name=None,
                             phase_step=None,
                         )

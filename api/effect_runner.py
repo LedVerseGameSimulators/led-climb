@@ -145,7 +145,12 @@ class EffectRunner:
                 return False
 
             if effect_name == "countdown":
-                self.game.update_state(phase_step=countdown_step(total_pass, thresholds))
+                step = countdown_step(total_pass, thresholds)
+                prev = getattr(self, "_last_countdown_step", None)
+                if step != prev and step in (3, 2, 1):
+                    self.audio.play_countdown_tick()
+                self._last_countdown_step = step
+                self.game.update_state(phase_step=step)
 
             self._publish_frame(rows, cols)
             duration = effect_duration(_dgroup)
@@ -182,7 +187,7 @@ class EffectRunner:
         self.game.update_state(
             phase="playing",
             accepting_input=True,
-            bgm_active=True,
+            bgm_active=bool(getattr(self.audio, "backend_active", False)),
             phase_step=None,
             effect_name=None,
         )

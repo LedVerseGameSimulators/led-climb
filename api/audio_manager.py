@@ -20,6 +20,8 @@ from .config import (
 )
 
 USE_SERIAL_HD = os.environ.get("USE_SERIAL_HD", "0") == "1"
+# Venue audio on by default; tests/CI set CLIMB_AUDIO_DISABLED=1.
+_AUDIO_DISABLED = os.environ.get("CLIMB_AUDIO_DISABLED", "0") == "1"
 
 
 class AudioManager:
@@ -34,16 +36,16 @@ class AudioManager:
         self._start_worker()
 
     def _start_worker(self) -> None:
-        if USE_SERIAL_HD:
+        if not _AUDIO_DISABLED:
             try:
                 import pygame  # type: ignore
 
                 if not pygame.mixer.get_init():
-                    pygame.mixer.init()
+                    pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
                 self._mixer = pygame.mixer
                 self._enabled = True
             except Exception as exc:
-                logger.warning(f"AudioManager HW init failed: {exc}")
+                logger.warning(f"AudioManager init failed: {exc}")
         self._thread = threading.Thread(target=self._worker, daemon=True, name="climb-audio")
         self._thread.start()
 
