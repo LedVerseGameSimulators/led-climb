@@ -60,6 +60,13 @@ if not exist "frontend\node_modules" (
     popd
 )
 
+if not exist "frontend\.env" (
+    if exist "frontend\.env.example" (
+        echo Creating frontend\.env from example (RFID address)...
+        copy /Y "frontend\.env.example" "frontend\.env" >nul
+    )
+)
+
 echo Stopping any previous LED Climb copy...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ports=8002,8766,5175; Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ports -contains $_.LocalPort } | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 taskkill /FI "WINDOWTITLE eq LED Climb API*" /T /F >nul 2>&1
