@@ -117,6 +117,15 @@ class AudioManager:
     def play_sfx(self, path: Path) -> None:
         self._enqueue("play_sfx", str(path))
 
+    def play_score_positive(self) -> None:
+        self.play_sfx(SCORE_POSITIVE)
+
+    def play_score_negative(self) -> None:
+        self.play_sfx(SCORE_NEGATIVE)
+
+    def play_countdown_tick(self) -> None:
+        self.play_sfx(COUNTDOWN_TICK)
+
     @property
     def bgm_active(self) -> bool:
         return self._bgm_playing
