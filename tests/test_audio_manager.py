@@ -19,5 +19,7 @@ def test_audio_manager_enqueue_returns_immediately():
         audio.play_stinger()
         audio.play_bgm()
         audio.stop_bgm()
+        audio.teardown()
     elapsed = time.perf_counter() - start
     assert elapsed < 0.5
+    assert audio.bgm_active is False

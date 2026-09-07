@@ -164,6 +164,19 @@ def _hw_blank_floor(led_table=None):
     except Exception as e:
         logger.warning(f"HW blank failed: {e}")
 
+
+def _teardown_game_audio(game) -> None:
+    """Stop process-global BGM and publish inactive state."""
+    if game is None:
+        return
+    audio = getattr(game, "audio", None)
+    if audio is not None:
+        audio.teardown()
+    try:
+        game.update_state(bgm_active=False)
+    except Exception:
+        pass
+
 # Will import after config is set
 # from game_play.Play import Play
 
@@ -1191,6 +1204,7 @@ class GameManager:
         with self.lock:
             for gid, g in list(self.games.items()):
                 g.begin_level_transition()
+                _teardown_game_audio(g)
                 g.running = False
             threads = [(gid, g.thread) for gid, g in self.games.items() if getattr(g, "thread", None)]
             led_tables = [g.led_table for g in self.games.values() if getattr(g, "led_table", None) is not None]
@@ -1778,7 +1792,7 @@ class GameManager:
                             levels_cleared=game.levels_cleared,
                             phase="playing",
                             accepting_input=game.accepting_input,
-                            bgm_active=bool(getattr(game.audio, "backend_active", False)),
+                            bgm_active=game.audio.bgm_active,
                             effect_name=None,
                             phase_step=None,
                         )
@@ -1804,6 +1818,7 @@ class GameManager:
                     logger.warning(f"No Play object or empty level sequence; "
                                    f"session cannot run: {game_id}")
                     game.begin_level_transition()
+                    _teardown_game_audio(game)
                     game.update_state(game_over=True, game_over_reason="no_levels",
                                       time_left=0, accepting_input=False)
                     game.running = False
@@ -1889,6 +1904,8 @@ class GameManager:
                                            f"{traceback.format_exc()}")
                             game._session_over = True
                             break
+                        finally:
+                            _teardown_game_audio(game)
 
                         if game._session_over:
                             _finish_session()
@@ -1953,6 +1970,7 @@ class GameManager:
                                   final_score=final_score, final_score2=final_score2)
                 game.running = False
                 game.begin_level_transition()
+                _teardown_game_audio(game)
                 if not game._session_end_played:
                     _hw_blank_floor(led_table)
 
@@ -1961,6 +1979,7 @@ class GameManager:
                 logger.error(f"Game error {game_id}: {e}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 game.begin_level_transition()
+                _teardown_game_audio(game)
                 game.running = False
                 game.update_state(
                     game_over=True,
@@ -1982,6 +2001,7 @@ class GameManager:
             return {"success": False, "error": f"Game not found: {game_id}"}
 
         game.begin_level_transition()
+        _teardown_game_audio(game)
         game.running = False
         if game.thread:
             game.thread.join(timeout=5)

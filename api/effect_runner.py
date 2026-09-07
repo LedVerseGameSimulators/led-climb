@@ -107,6 +107,8 @@ class EffectRunner:
         play_stinger: bool = False,
     ) -> bool:
         """Play one effect archive. Returns False if session aborted."""
+        self.audio.stop_bgm()
+        self.game.update_state(bgm_active=False)
         if not self.game.running:
             return False
 
@@ -117,7 +119,6 @@ class EffectRunner:
             "level_fail": "level_fail",
         }.get(effect_name, effect_name)
 
-        self.audio.stop_bgm()
         if play_stinger or effect_name in ("level_clear", "level_fail"):
             self.audio.play_stinger()
 
@@ -185,10 +186,8 @@ class EffectRunner:
 
     def enter_gameplay(self) -> None:
         self.game.finish_level_transition()
-        self.game.update_state(
-            bgm_active=bool(getattr(self.audio, "backend_active", False)),
-        )
         self.audio.play_bgm()
+        self.game.update_state(bgm_active=self.audio.bgm_active)
 
     def run_session_end(self) -> None:
         if getattr(self.game, "_session_end_played", False):
@@ -196,5 +195,6 @@ class EffectRunner:
         self.game._session_end_played = True
         self.game.update_state(phase="session_end", accepting_input=False, bgm_active=False)
         self.run("level_clear", phase="session_end", play_stinger=True)
+        self.audio.teardown()
         self.game.update_state(phase="black", accepting_input=False, bgm_active=False, effect_name=None)
         self.blank_floor(self.led_table)
