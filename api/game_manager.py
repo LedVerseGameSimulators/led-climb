@@ -338,8 +338,12 @@ def _run_level_attempt(
     setup_consumer,
     play_consumer,
     reset_consumer=None,
+    transition_consumer=None,
+    ready_consumer=None,
 ):
     """Load and prepare one fresh attempt before invoking runtime consumers."""
+    if transition_consumer is not None:
+        transition_consumer()
     groups, game = _load_level_file(path)
     if not groups:
         raise LevelAttemptPreparationError(
@@ -359,7 +363,13 @@ def _run_level_attempt(
         raise LevelAttemptPreparationError(str(exc)) from exc
 
     setup_consumer(groups, game)
-    play_consumer(groups)
+    if ready_consumer is not None:
+        ready_consumer()
+    try:
+        play_consumer(groups)
+    finally:
+        if transition_consumer is not None:
+            transition_consumer()
     return groups, game
 
 
@@ -739,6 +749,8 @@ class GameInstance:
         self.input_lock = threading.RLock()
         self.sim_pressed = set()
         self.hw_state_table = None
+        self.accepting_input = False  # gated until a prepared level is fully set up
+        self._suppress_until_release = set()  # held-at-transition cells; ignore until release
         self.state_lock = threading.Lock()
         self.running = False
 
@@ -842,19 +854,91 @@ class GameInstance:
     def reset_for_level(self):
         """Clear PER-LEVEL board state before loading the next level.
         Score, score2, life, session timer all PERSIST (not reset)."""
-        self.flashes = {}
-        self.scored_active = set()
-        self.scored_active2 = set()
-        self.pending_respawn = []
-        self.p2_next_cells = set()
-        self.goal_cells = set()
-        self.goal2_cells = set()
-        self.red_cells = set()
-        self.deduct_cells = set()
+        with self.input_lock:
+            self.flashes = {}
+            self.scored_active = set()
+            self.scored_active2 = set()
+            self.pending_respawn = []
+            self.p2_next_cells = set()
+            self.goal_cells = set()
+            self.goal2_cells = set()
+            self.red_cells = set()
+            self.deduct_cells = set()
+            self.last_life_loss_time = 0.0
+            self._level_cleared = False
+            self._restart_level = False
+            self._no_reachable_goal_since = None
+
+    def _collect_pressed_cells(self) -> set:
+        """Snapshot of cells currently pressed (effective, sim, or hardware)."""
+        pressed = set(self.sim_pressed)
+        if self.led_table is not None:
+            for row_index, row in enumerate(self.led_table.state_table):
+                for col_index, is_pressed in enumerate(row):
+                    if is_pressed:
+                        pressed.add((row_index, col_index))
+        if self.hw_state_table is not None:
+            for row_index, row in enumerate(self.hw_state_table):
+                for col_index, is_pressed in enumerate(row):
+                    if is_pressed:
+                        pressed.add((row_index, col_index))
+        return pressed
+
+    def _note_input_release(self, row: int, col: int) -> None:
+        self._suppress_until_release.discard((row, col))
+
+    def begin_level_transition(self):
+        """Fail closed while level geometry and classification are changing."""
+        with self.input_lock:
+            self.accepting_input = False
+            self._suppress_until_release = self._collect_pressed_cells()
+            if self.led_table is not None:
+                for row in self.led_table.state_table:
+                    for col_index in range(len(row)):
+                        row[col_index] = False
+            self.sim_pressed.clear()
+            self.goal_cells = set()
+            self.goal2_cells = set()
+            self.red_cells = set()
+            self.deduct_cells = set()
+            self.scored_active = set()
+            self.scored_active2 = set()
+            self.flashes = {}
+            self.current_state["accepting_input"] = False
+
+    def finish_level_transition(self):
+        """Enable input only after the prepared level has been installed."""
+        with self.input_lock:
+            if self.running and not self.current_state.get("game_over"):
+                self.accepting_input = True
+                self.current_state["accepting_input"] = True
+                self.current_state["phase"] = "playing"
+                self.current_state["phase_step"] = None
+                self.current_state["effect_name"] = None
+
+    def mark_session_failed(self, reason, error):
+        """Record a terminal session error and prevent success resolution."""
+        self.begin_level_transition()
+        self._session_over = True
+        self._end_reason = reason
+        self.update_state(
+            game_over=True,
+            game_over_reason=reason,
+            result=0,
+            accepting_input=False,
+        )
+
+    def refill_life_for_restart(self):
+        """Refill and publish HP immediately while the replay is prepared."""
+        self.begin_level_transition()
+        self.life = self.max_life
         self.last_life_loss_time = 0.0
-        self._level_cleared = False
-        self._restart_level = False
-        self._no_reachable_goal_since = None
+        self.update_state(
+            life=self.life,
+            display_lives=5,
+            current_level=self.current_level_id,
+            accepting_input=False,
+        )
 
     def _current_level_time(self) -> float:
         """Level timeline for consume/scoring (Play.total_pass)."""
@@ -911,6 +995,10 @@ class GameInstance:
           - goal_led target  -> +1 point + consume (tile blanks) + flash
           - background decor  -> nothing (neutral)
         goal/red membership is classified per frame in the callback."""
+        if not self.accepting_input:
+            return
+        if (i, j) in self._suppress_until_release:
+            return
         if total_pass is None:
             total_pass = self._current_level_time()
         # Red hazard: penalty + HP loss (gated). Not edge-limited by
@@ -1032,7 +1120,7 @@ class GameInstance:
         Simulator presses are tracked separately from physical sensors, then
         merged into the effective state table so a hardware read cannot erase
         a held mouse/touch press."""
-        if not self.current_state.get("accepting_input", False):
+        if not self.accepting_input:
             return False
         if self.led_table is None:
             return False
@@ -1052,6 +1140,7 @@ class GameInstance:
                 self.try_score_cell(row, col)  # score on press (instant clicks)
             elif action == "release":
                 self.sim_pressed.discard((row, col))
+                self._note_input_release(row, col)
                 hardware_pressed = (
                     self.hw_state_table is not None and
                     self.hw_state_table[row][col]
@@ -1080,7 +1169,9 @@ class GameInstance:
                         )
                     )
                     self.led_table.state_table[row][col] = is_pressed
-                    if is_pressed and not was_pressed:
+                    if not is_pressed:
+                        self._note_input_release(row, col)
+                    elif not was_pressed and (row, col) not in self._suppress_until_release:
                         source = "simulator" if (row, col) in self.sim_pressed else "hardware"
                         self._record_input_event(row, col, source)
 
@@ -1099,6 +1190,7 @@ class GameManager:
         """Stop and remove all existing games. Joins threads (3s timeout) before clearing."""
         with self.lock:
             for gid, g in list(self.games.items()):
+                g.begin_level_transition()
                 g.running = False
             threads = [(gid, g.thread) for gid, g in self.games.items() if getattr(g, "thread", None)]
             led_tables = [g.led_table for g in self.games.values() if getattr(g, "led_table", None) is not None]
@@ -1569,30 +1661,31 @@ class GameManager:
                             game.goal2_cells = goal2_cells
                             game.red_cells = red_cells
                             game.deduct_cells = deduct_cells
-                            if game.multiplayer:
-                                game.process_respawns()
-                            # Keep scored marks for ACTIVE goal/deduct cells only.
-                            # Deduct cells must stay in scored_active while pressed
-                            # or they fire every single frame (life drain per frame).
-                            active_consumables = goal_cells | goal2_cells | deduct_cells
-                            game.scored_active &= active_consumables
-                            game.scored_active2 &= goal2_cells
-                            prev_score = game.score
-                            prev_score2 = game.score2
-                            prev_life = game.life
-                            for i in range(led_table.led_row):
-                                for j in range(led_table.led_col):
-                                    if state[i][j]:
-                                        game.try_score_cell(i, j)
-                            if game.audio.backend_active:
-                                if game.score > prev_score or game.score2 > prev_score2:
-                                    game.audio.play_score_positive()
-                                elif (
-                                    game.score < prev_score
-                                    or game.score2 < prev_score2
-                                    or game.life < prev_life
-                                ):
-                                    game.audio.play_score_negative()
+                            if game.accepting_input:
+                                if game.multiplayer:
+                                    game.process_respawns()
+                                # Keep scored marks for ACTIVE goal/deduct cells only.
+                                # Deduct cells must stay in scored_active while pressed
+                                # or they fire every single frame (life drain per frame).
+                                active_consumables = goal_cells | goal2_cells | deduct_cells
+                                game.scored_active &= active_consumables
+                                game.scored_active2 &= goal2_cells
+                                prev_score = game.score
+                                prev_score2 = game.score2
+                                prev_life = game.life
+                                for i in range(led_table.led_row):
+                                    for j in range(led_table.led_col):
+                                        if state[i][j]:
+                                            game.try_score_cell(i, j)
+                                if game.audio.backend_active:
+                                    if game.score > prev_score or game.score2 > prev_score2:
+                                        game.audio.play_score_positive()
+                                    elif (
+                                        game.score < prev_score
+                                        or game.score2 < prev_score2
+                                        or game.life < prev_life
+                                    ):
+                                        game.audio.play_score_negative()
 
                         # 2) Build display buffer from the PRIORITY winner map so
                         #    overlapping cells render the WINNING color (green >
@@ -1684,7 +1777,7 @@ class GameManager:
                             current_level=game.current_level_id,
                             levels_cleared=game.levels_cleared,
                             phase="playing",
-                            accepting_input=True,
+                            accepting_input=game.accepting_input,
                             bgm_active=bool(getattr(game.audio, "backend_active", False)),
                             effect_name=None,
                             phase_step=None,
@@ -1710,8 +1803,9 @@ class GameManager:
                 if play is None or not game.level_sequence:
                     logger.warning(f"No Play object or empty level sequence; "
                                    f"session cannot run: {game_id}")
+                    game.begin_level_transition()
                     game.update_state(game_over=True, game_over_reason="no_levels",
-                                      time_left=0)
+                                      time_left=0, accepting_input=False)
                     game.running = False
                     _hw_blank_floor(led_table)
                     return
@@ -1781,6 +1875,8 @@ class GameManager:
                                 reset_consumer=game.reset_for_level,
                                 setup_consumer=_setup_attempt,
                                 play_consumer=_play_level,
+                                transition_consumer=game.begin_level_transition,
+                                ready_consumer=game.finish_level_transition,
                             )
                         except LevelAttemptPreparationError as prep_err:
                             logger.warning(
@@ -1800,6 +1896,7 @@ class GameManager:
 
                         if game._restart_level:
                             game._restart_level = False
+                            game.refill_life_for_restart()
                             effect_runner.run("level_fail", play_stinger=True)
                             if game._session_over or not game.running:
                                 break
@@ -1807,8 +1904,6 @@ class GameManager:
                             if game._session_over or not game.running:
                                 break
                             effect_runner.enter_gameplay()
-                            game.life = game.max_life
-                            game.last_life_loss_time = 0.0
                             logger.info(f"↻ Life restart: level={lvl_id}, score={game.score}")
                             continue
 
@@ -1857,6 +1952,7 @@ class GameManager:
                                   levels_cleared=game.levels_cleared,
                                   final_score=final_score, final_score2=final_score2)
                 game.running = False
+                game.begin_level_transition()
                 if not game._session_end_played:
                     _hw_blank_floor(led_table)
 
@@ -1864,6 +1960,7 @@ class GameManager:
                 import traceback
                 logger.error(f"Game error {game_id}: {e}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
+                game.begin_level_transition()
                 game.running = False
                 game.update_state(
                     game_over=True,
@@ -1884,6 +1981,7 @@ class GameManager:
         if not game:
             return {"success": False, "error": f"Game not found: {game_id}"}
 
+        game.begin_level_transition()
         game.running = False
         if game.thread:
             game.thread.join(timeout=5)

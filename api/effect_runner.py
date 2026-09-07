@@ -184,12 +184,9 @@ class EffectRunner:
         return True
 
     def enter_gameplay(self) -> None:
+        self.game.finish_level_transition()
         self.game.update_state(
-            phase="playing",
-            accepting_input=True,
             bgm_active=bool(getattr(self.audio, "backend_active", False)),
-            phase_step=None,
-            effect_name=None,
         )
         self.audio.play_bgm()
 
