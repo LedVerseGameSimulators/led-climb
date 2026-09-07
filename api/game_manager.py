@@ -165,6 +165,34 @@ def _hw_blank_floor(led_table=None):
         logger.warning(f"HW blank failed: {e}")
 
 
+def _hw_draw_led_display(game, led_table, led_display):
+    """Push one flat RGB buffer to the physical floor (draw only, no sensor I/O).
+
+    Uses the same row-major geometry mapping and rate limiting as gameplay
+    frames. Safe to call from transition effects while input is gated.
+    """
+    if not (USE_SERIAL_HD and _hw_led_control is not None):
+        return False
+    now = time.time()
+    if now - getattr(game, "_hw_last_draw", 0) < _HW_DRAW_INTERVAL:
+        return False
+    try:
+        rc = led_table.led_row
+        cc = led_table.led_col
+        ld2 = [
+            [_normalize_rgb(led_display[r * cc + c]) for c in range(cc)]
+            for r in range(rc)
+        ]
+        with _hw_serial_lock:
+            _hw_led_control.draw_screen_by_com(_hw_layout_type, ld2)
+        game._hw_last_draw = now
+        game._hw_draw_count = getattr(game, "_hw_draw_count", 0) + 1
+        return True
+    except Exception as e:
+        logger.warning(f"HW draw failed: {e}")
+        return False
+
+
 def _teardown_game_audio(game) -> None:
     """Stop process-global BGM and publish inactive state."""
     if game is None:

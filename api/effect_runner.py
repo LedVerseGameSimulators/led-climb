@@ -97,6 +97,7 @@ class EffectRunner:
                     idx = r * cols + c
                     led_display[idx] = [int(mc[0]), int(mc[1]), int(mc[2])]
         self.game.update_state(led_display=led_display, grid_rows=rows, grid_cols=cols)
+        _gm()._hw_draw_led_display(self.game, self.led_table, led_display)
         return led_display
 
     def run(
