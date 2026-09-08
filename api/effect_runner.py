@@ -177,8 +177,15 @@ class EffectRunner:
                 play_consumer=_play_effect,
             )
         except _gm().LevelAttemptPreparationError as exc:
+            # Missing/unreadable effect must NOT abort the marathon — venue
+            # play continues without the transition visual.
             logger.warning(f"Effect {effect_name} skipped: {exc}")
-            return False
+            self.game.update_state(
+                phase="playing" if effect_name == "countdown" else display_phase,
+                effect_name=None,
+                phase_step=None,
+            )
+            return True
 
         if not self.game.running or self.game._session_over:
             self.blank_floor(self.led_table)

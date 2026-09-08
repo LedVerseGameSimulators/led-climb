@@ -69,15 +69,24 @@ def _game_obj(row: int = 6, col: int = 33) -> Game:
 
 
 def _write_archive(out_path: Path, folder: str, game_obj: Game, groups: dict) -> None:
+    """Write a .led zip with dbm.dumb shelve so Windows + Linux can both load it.
+
+    Default ``shelve.open`` on Linux often writes gdbm ``.db`` files that
+    Windows Python cannot open (no ``_gdbm``). Venue PCs are Windows.
+    """
+    import dbm.dumb
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
         sub = Path(tmp) / folder
         sub.mkdir()
         gf = str(sub / "game_file")
-        db = shelve.open(gf)
-        db["para_key_game"] = game_obj
-        db["dict_group"] = groups
-        db.close()
+        db = shelve.Shelf(dbm.dumb.open(gf, "c"))
+        try:
+            db["para_key_game"] = game_obj
+            db["dict_group"] = groups
+        finally:
+            db.close()
         with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for root, _, files in os.walk(tmp):
                 for fname in files:

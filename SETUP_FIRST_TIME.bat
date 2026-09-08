@@ -7,7 +7,7 @@ title LED Game - First-time setup
 
 echo.
 echo ==========================================
-echo   FIRST TIME SETUP (tech only)
+echo   FIRST TIME SETUP - tech only
 echo   Folder: %CD%
 echo ==========================================
 echo.
@@ -63,13 +63,11 @@ if not exist "frontend\.env" (
 
 echo.
 echo SETUP COMPLETE for this game.
-echo Next: double-click START_GAME.bat
+echo Next: run START_GAME.bat
 echo.
-pause
 exit /b 0
 
 :fail
 echo.
 echo SETUP FAILED. Fix the error above, then run this again.
-pause
 exit /b 1

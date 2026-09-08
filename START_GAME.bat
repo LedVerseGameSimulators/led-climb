@@ -18,7 +18,7 @@ if errorlevel 1 (
         set "PATH=%LOCALAPPDATA%\Programs\Python\Python311;%LOCALAPPDATA%\Programs\Python\Python311\Scripts;%PATH%"
     ) else (
         echo ERROR: Python 3.11 is not installed.
-        echo Install Python 3.11, then double-click START_GAME.bat again.
+        echo Install Python 3.11, then run START_GAME.bat again.
         goto :failed
     )
 )
@@ -26,7 +26,7 @@ if errorlevel 1 (
 where npm >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Node.js/npm is not installed.
-    echo Install Node.js LTS, then double-click START_GAME.bat again.
+    echo Install Node.js LTS, then run START_GAME.bat again.
     goto :failed
 )
 
@@ -42,7 +42,8 @@ if not exist "games\setting\debug_parameter.dat" (
 )
 
 echo Checking Python packages...
-python -c "import fastapi, uvicorn, httpx, serial" >nul 2>&1
+REM Use semicolons — commas inside python -c break some cmd parsers.
+python -c "import fastapi; import uvicorn; import httpx; import serial" >nul 2>&1
 if errorlevel 1 (
     echo Installing required Python packages...
     python -m pip install -r "api\requirements.txt"
@@ -60,9 +61,10 @@ if not exist "frontend\node_modules" (
     popd
 )
 
+REM Do not put parentheses in echo text inside this IF — cmd treats ) as end-of-block.
 if not exist "frontend\.env" (
     if exist "frontend\.env.example" (
-        echo Creating frontend\.env from example (RFID address)...
+        echo Creating frontend\.env from example for RFID...
         copy /Y "frontend\.env.example" "frontend\.env" >nul
     )
 )
@@ -72,9 +74,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ports=8002,8766,5175; G
 taskkill /FI "WINDOWTITLE eq LED Climb API*" /T /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq LED Climb Bridge*" /T /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq LED Climb UI*" /T /F >nul 2>&1
-timeout /t 1 /nobreak >nul
+REM ping-wait works under agent shells; timeout.exe fails with redirected stdin
+ping -n 2 127.0.0.1 >nul
 
-echo Starting floor engine (hardware mode)...
+echo Starting floor engine - hardware mode...
 start "LED Climb API" /min cmd.exe /k call "scripts\run-api.bat"
 
 echo Starting simulator bridge...
@@ -84,19 +87,19 @@ echo Starting operator interface...
 start "LED Climb UI" /min cmd.exe /k call "scripts\run-ui.bat"
 
 echo Waiting for services...
-timeout /t 5 /nobreak >nul
+ping -n 6 127.0.0.1 >nul
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r=Invoke-WebRequest -UseBasicParsing 'http://localhost:8002/health' -TimeoutSec 3; if ($r.StatusCode -ne 200) { exit 1 } } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 (
     echo ERROR: The floor engine did not start.
-    echo Check the minimized "LED Climb API" window for details.
+    echo Check the minimized LED Climb API window for details.
     goto :failed
 )
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r=Invoke-WebRequest -UseBasicParsing 'http://localhost:8766/status' -TimeoutSec 3; if ($r.StatusCode -ne 200) { exit 1 } } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 (
     echo ERROR: The simulator bridge did not start.
-    echo Check the minimized "LED Climb Bridge" window for details.
+    echo Check the minimized LED Climb Bridge window for details.
     goto :failed
 )
 
@@ -105,13 +108,11 @@ echo LED Climb is ready.
 echo Opening http://localhost:5175
 echo.
 start "" "http://localhost:5175"
-timeout /t 2 /nobreak >nul
+ping -n 3 127.0.0.1 >nul
 exit /b 0
 
 :failed
 echo.
 echo START FAILED. Read the error above or see OPERATOR_GUIDE.md.
 echo See OPERATOR_GUIDE.md for common fixes.
-if /i "%START_GAME_NONINTERACTIVE%"=="1" exit /b 1
-pause
 exit /b 1
