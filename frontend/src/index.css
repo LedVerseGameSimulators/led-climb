@@ -236,7 +236,7 @@ input {
   background: rgba(47, 107, 255, 0.12);
 }
 
-/* Selected = same for all modes: solid magenta + white text */
+/* Selected = same for all modes: solid accent + white text */
 .mode-btn.is-selected {
   background: var(--accent) !important;
   border-color: var(--accent) !important;
