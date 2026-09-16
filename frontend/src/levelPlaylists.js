@@ -35,6 +35,25 @@ export const HOW_TO = {
     'A fixed set of levels runs in order. No level pick — just play through 1, 2, 3… as a group session.',
 }
 
+/** Bullet copy for Setup screen (mock-style how-to). */
+export const HOW_TO_BULLETS = {
+  single: [
+    'Watch the goal colour on the HUD.',
+    'Hit matching glowing holds as fast as you can.',
+    'Avoid red hazards — clear each wave to advance.',
+  ],
+  multi: [
+    'Each player scores their own colour on the wall.',
+    'Red hurts both — climb sharp together.',
+    'Clear your targets to progress through levels.',
+  ],
+  group: [
+    'A fixed tournament set runs in order — no level pick.',
+    'Play through levels 1, 2, 3… as a group session.',
+    'Clear each stage to keep climbing.',
+  ],
+}
+
 export function playlistForMode(playMode) {
   if (playMode === 'multi') return TEAM_BATTLE_LEVELS
   if (playMode === 'group') return TOURNAMENT_LEVEL_ORDER
