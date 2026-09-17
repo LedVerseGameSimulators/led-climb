@@ -49,7 +49,8 @@ Hex-style contract (logical names for RFID / LB):
 
 ## Non-FE leftovers
 
-- [ ] Shared **2P rules** later (lives-only red; either-player advance; goal-color HUD)
+- [x] Shared **2P rules** Phase A — lives-only red/DEDUCT + goal-color HUD (`tests/test_mp_phase_a.py`)
+- [x] Shared **2P rules** Phase B — either-player wave advance (`tests/test_mp_phase_b.py`, `docs/MP_PHASE_B_TEST_LEVELS.md`)
 - [ ] Optional: delete dead FE screens; unused `public/audio/transition_stinger.mp3` fate
 
 ---

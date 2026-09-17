@@ -726,6 +726,102 @@ def _rgb_is_red(rgb):
     return rgb[0] >= 200 and rgb[1] < 80 and rgb[2] < 30
 
 
+_MP_P1_COLOR = (0, 0, 254)
+_MP_P2_COLOR = (254, 128, 0)
+_FLOOR_LIGHT = "floor_light"
+
+
+def _mp_active_wave_members(groups, total_pass, color, unused_cells=None):
+    """Yield (group, cell) for scoreable members in the active time window."""
+    unused = unused_cells or set()
+    for g in groups.values():
+        if getattr(g, "type", None) != _FLOOR_LIGHT:
+            continue
+        if _group_main_color(g.color) != color:
+            continue
+        sm = getattr(g, "start_member", None)
+        if not sm:
+            continue
+        st = getattr(g, "start_time_sec", 0)
+        et = getattr(g, "end_time_sec", 0)
+        if not (st <= total_pass <= et):
+            continue
+        for cell in sm:
+            ci = round(cell[0])
+            cj = round(cell[1])
+            if (ci, cj) in unused:
+                continue
+            yield g, (ci, cj)
+
+
+def _mp_has_active_wave_members(groups, total_pass, color, unused_cells=None):
+    for _ in _mp_active_wave_members(groups, total_pass, color, unused_cells):
+        return True
+    return False
+
+
+def _discard_mp_current_wave_members(groups, total_pass, color, unused_cells=None):
+    """Discard leftover scoreable members for one player in the active window."""
+    discarded = 0
+    for g, (ci, cj) in list(
+        _mp_active_wave_members(groups, total_pass, color, unused_cells)
+    ):
+        sm = getattr(g, "start_member", None)
+        if sm is None:
+            continue
+        try:
+            if isinstance(sm, set):
+                sm.discard((ci, cj))
+            else:
+                sm.remove((ci, cj))
+            discarded += 1
+        except (KeyError, ValueError, TypeError):
+            pass
+    return discarded
+
+
+def _mp_update_wave_latch(game, groups, total_pass, goal_cells, goal2_cells):
+    """Track whether each side had scoreables during the current wave."""
+    if goal_cells or _mp_has_active_wave_members(
+        groups, total_pass, _MP_P1_COLOR, game.unused_cells
+    ):
+        game._mp_wave_had_p1 = True
+    if goal2_cells or _mp_has_active_wave_members(
+        groups, total_pass, _MP_P2_COLOR, game.unused_cells
+    ):
+        game._mp_wave_had_p2 = True
+
+
+def _mp_try_either_player_advance(game, groups, total_pass, goal_cells, goal2_cells):
+    """Either-player wave advance with vacuous-empty latch (multiplayer only).
+
+    When one side that had scoreables this wave is now clear, discard the
+    other side's current-wave leftovers and signal the caller to auto-jump.
+    """
+    if not game.multiplayer or total_pass <= 1.5:
+        return False
+
+    _mp_update_wave_latch(game, groups, total_pass, goal_cells, goal2_cells)
+
+    p1_cleared = game._mp_wave_had_p1 and not goal_cells
+    p2_cleared = game._mp_wave_had_p2 and not goal2_cells
+    if not (p1_cleared or p2_cleared):
+        return False
+
+    if p1_cleared:
+        _discard_mp_current_wave_members(
+            groups, total_pass, _MP_P2_COLOR, game.unused_cells
+        )
+    if p2_cleared:
+        _discard_mp_current_wave_members(
+            groups, total_pass, _MP_P1_COLOR, game.unused_cells
+        )
+
+    game._mp_wave_had_p1 = False
+    game._mp_wave_had_p2 = False
+    return True
+
+
 class HeadlessGameGUI:
     """Mock GUI parent for Play.running_new() - provides LED update callback"""
 
@@ -842,6 +938,8 @@ class GameInstance:
         self._level_cleared = False    # True -> advance to next level
         self._restart_level = False    # True -> replay same level (life=0, time left)
         self._no_reachable_goal_since = None
+        self._mp_wave_had_p1 = False   # vacuous-empty latch (MP Phase B)
+        self._mp_wave_had_p2 = False
         self._end_reason = None        # why the marathon loop exited (timeout/None)
         self._session_end_played = False
 
@@ -909,6 +1007,8 @@ class GameInstance:
             self._level_cleared = False
             self._restart_level = False
             self._no_reachable_goal_since = None
+            self._mp_wave_had_p1 = False
+            self._mp_wave_had_p2 = False
 
     def _collect_pressed_cells(self) -> set:
         """Snapshot of cells currently pressed (effective, sim, or hardware)."""
@@ -1651,8 +1751,22 @@ class GameManager:
                         # wave cleared, next wave is in the future). Skip dead time
                         # by advancing total_pass to the next scoreable wave's start.
                         # Mirrors real game's running_by_blue auto-jump.
-                        if total_pass > 1.5 and remaining_scoreable > 0 \
-                                and not goal_cells and not goal2_cells:
+                        # MP Phase B: either player clearing their wave discards the
+                        # other's current-window leftovers and triggers jump.
+                        mp_wave_advanced = False
+                        if game.multiplayer and total_pass > 1.5:
+                            mp_wave_advanced = _mp_try_either_player_advance(
+                                game,
+                                dgroup,
+                                total_pass,
+                                goal_cells,
+                                goal2_cells,
+                            )
+                        wave_quiet = (
+                            mp_wave_advanced
+                            or (not goal_cells and not goal2_cells)
+                        )
+                        if total_pass > 1.5 and remaining_scoreable > 0 and wave_quiet:
                             next_start = None
                             for g in dgroup.values():
                                 if getattr(g, "type", None) != Setting.FLOOR_LIGHT:
