@@ -306,6 +306,14 @@ export default function SimulatorScreen({ config, onGameEnd }) {
   const maxLife = gameState?.display_max ?? gameState?.max_life ?? 5
   const isOver = gameState?.game_over
   const isMulti = !!(gameState?.multiplayer || config.playerCount === 2)
+  // Swatches gate on backend multiplayer only (not FE playerCount alone).
+  const showGoalSwatches = gameState?.multiplayer === true
+  const goalColorCss = Array.isArray(gameState?.goal_color) && gameState.goal_color.length >= 3
+    ? `rgb(${gameState.goal_color[0]}, ${gameState.goal_color[1]}, ${gameState.goal_color[2]})`
+    : null
+  const goal2ColorCss = Array.isArray(gameState?.goal2_color) && gameState.goal2_color.length >= 3
+    ? `rgb(${gameState.goal2_color[0]}, ${gameState.goal2_color[1]}, ${gameState.goal2_color[2]})`
+    : null
   const p1Name = config.playerName || 'Player 1'
   const p2Name = config.playerName2 || 'Player 2'
   const currentLevelRaw = gameState?.current_level ?? config.level
@@ -405,6 +413,14 @@ export default function SimulatorScreen({ config, onGameEnd }) {
                   )}
                   <div className="hud-score">{gameState?.score ?? 0}</div>
                   <div className="hud-score-label">{isMulti ? 'P1 Score' : 'Score'}</div>
+                  {showGoalSwatches && goalColorCss && (
+                    <div
+                      className="hud-goal-swatch"
+                      style={{ backgroundColor: goalColorCss }}
+                      title="P1 target color"
+                      aria-label="P1 target color"
+                    />
+                  )}
                 </div>
                 {isMulti && (
                   <div className="hud-player hud-player--p2">
@@ -416,6 +432,14 @@ export default function SimulatorScreen({ config, onGameEnd }) {
                     )}
                     <div className="hud-score">{gameState?.score2 ?? 0}</div>
                     <div className="hud-score-label">P2 Score</div>
+                    {showGoalSwatches && goal2ColorCss && (
+                      <div
+                        className="hud-goal-swatch"
+                        style={{ backgroundColor: goal2ColorCss }}
+                        title="P2 target color"
+                        aria-label="P2 target color"
+                      />
+                    )}
                   </div>
                 )}
               </div>

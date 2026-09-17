@@ -1044,27 +1044,28 @@ class GameInstance:
             total_pass = self._current_level_time()
         # Red hazard: penalty + HP loss (gated). Not edge-limited by
         # scored_active (standing on red keeps hurting, rate-limited by time).
+        # Multiplayer (Team Battle): lives only — no score/score2 change.
         if (i, j) in self.red_cells:
             now = time.time()
             if now - self.last_life_loss_time >= self._life_count_time:
-                self.score -= 1
-                if self.score < 0:
-                    self.score = 0
-                if self.multiplayer:          # red hurts both players in 2P
-                    self.score2 -= 1
-                    if self.score2 < 0:
-                        self.score2 = 0
+                if not self.multiplayer:
+                    self.score -= 1
+                    if self.score < 0:
+                        self.score = 0
                 self.life -= 1
                 self.last_life_loss_time = now
             return
-        # DEDUCT tile: -1 SCORE only (NO life loss), then consume.
-        # Faithful to original gui_editor_game.py (DEDUCT_COLOR block):
-        # scode_value -= ONE_SCODE_VALUE, no life_value change.
+        # DEDUCT tile: 1P = -1 SCORE only (NO life loss), then consume.
+        # Faithful to original gui_editor_game.py (DEDUCT_COLOR block).
+        # Multiplayer: life only (no score/score2), then consume.
         if (i, j) in self.deduct_cells and (i, j) not in self.scored_active:
             self.scored_active.add((i, j))
-            self.score -= 1
-            if self.score < 0:
-                self.score = 0
+            if self.multiplayer:
+                self.life -= 1
+            else:
+                self.score -= 1
+                if self.score < 0:
+                    self.score = 0
             self._consume_cell(i, j, total_pass)
             return
         in_p1 = (i, j) in self.goal_cells
@@ -1801,10 +1802,16 @@ class GameManager:
                             ]
                         input_events = game._input_event_snapshot()
 
+                        # Climb Team Battle HUD: hard-coded P1 blue / P2 orange
+                        # (matches floor scoring colors). Omit when not MP.
+                        _goal_color = [0, 0, 254] if game.multiplayer else None
+                        _goal2_color = [254, 128, 0] if game.multiplayer else None
                         game.update_state(
                             score=game.score,
                             score2=game.score2,
                             multiplayer=game.multiplayer,
+                            goal_color=_goal_color,
+                            goal2_color=_goal2_color,
                             time_elapsed=session_elapsed,                       # SESSION elapsed
                             time_left=max(0, game.game_time_sec - session_elapsed),  # SESSION countdown
                             life=game.life,
