@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+export ACTIVERSE_KIOSK=0
 export API_PORT=8001
 export WS_BRIDGE_PORT=8766
 UI_PORT=5174

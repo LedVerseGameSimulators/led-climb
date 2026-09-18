@@ -4,6 +4,8 @@ title LED Climb Launcher
 cd /d "%~dp0"
 set "ROOT=%CD%"
 
+if not defined ACTIVERSE_KIOSK set "ACTIVERSE_KIOSK=1"
+
 echo.
 echo ==========================================
 echo          LED CLIMB - START GAME
@@ -70,25 +72,40 @@ if not exist "frontend\.env" (
 )
 
 echo Stopping any previous LED Climb copy...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ports=8002,8766,5175; Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ports -contains $_.LocalPort } | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }" >nul 2>&1
-taskkill /FI "WINDOWTITLE eq LED Climb API*" /T /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq LED Climb Bridge*" /T /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq LED Climb UI*" /T /F >nul 2>&1
-REM ping-wait works under agent shells; timeout.exe fails with redirected stdin
+call "%ROOT%\STOP_GAME.bat" /quiet
 ping -n 2 127.0.0.1 >nul
 
 echo Starting floor engine - hardware mode...
-start "LED Climb API" /min cmd.exe /k call "scripts\run-api.bat"
+start "LED Climb API" /MIN /D "%ROOT%" cmd.exe /k call "scripts\run-api.bat"
 
 echo Starting simulator bridge...
-start "LED Climb Bridge" /min cmd.exe /k call "scripts\run-bridge.bat"
+start "LED Climb Bridge" /MIN /D "%ROOT%" cmd.exe /k call "scripts\run-bridge.bat"
 
 echo Starting operator interface...
-start "LED Climb UI" /min cmd.exe /k call "scripts\run-ui.bat"
+set "WINDOW_TITLE_UI=LED Climb UI"
+call "%ROOT%\scripts\kiosk\run-ui-prod.bat" 5175
+if errorlevel 1 goto :failed
+ping -n 5 127.0.0.1 >nul
 
-echo Waiting for services...
-ping -n 6 127.0.0.1 >nul
+echo Waiting for game UI...
+set /a _tries=0
 
+:wait_ui
+set /a _tries+=1
+powershell -NoProfile -Command "try { (Invoke-WebRequest -Uri 'http://127.0.0.1:5175/' -UseBasicParsing -TimeoutSec 2).StatusCode } catch { exit 1 }" >nul 2>&1
+if not errorlevel 1 goto ui_ready
+if %_tries% GEQ 30 goto ui_timeout
+ping -n 2 127.0.0.1 >nul
+goto wait_ui
+
+:ui_timeout
+echo WARNING: UI did not respond yet. Opening browser anyway.
+goto check_services
+
+:ui_ready
+echo UI is ready.
+
+:check_services
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r=Invoke-WebRequest -UseBasicParsing 'http://localhost:8002/health' -TimeoutSec 3; if ($r.StatusCode -ne 200) { exit 1 } } catch { exit 1 }" >nul 2>&1
 if errorlevel 1 (
     echo ERROR: The floor engine did not start.
@@ -103,12 +120,16 @@ if errorlevel 1 (
     goto :failed
 )
 
+call "%ROOT%\scripts\kiosk\open-ui.bat" 5175 climb
+
 echo.
-echo LED Climb is ready.
-echo Opening http://localhost:5175
+echo ==========================================
+echo   LED CLIMB is running
+echo   Open:  http://127.0.0.1:5175/
+echo   Ctrl+Shift+K exits fullscreen kiosk
+echo   To stop: double-click STOP_GAME.bat
+echo ==========================================
 echo.
-start "" "http://localhost:5175"
-ping -n 3 127.0.0.1 >nul
 exit /b 0
 
 :failed

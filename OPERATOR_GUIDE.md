@@ -12,8 +12,13 @@ required.
    - **LED Climb API** — floor engine and physical hardware;
    - **LED Climb Bridge** — simulator updates;
    - **LED Climb UI** — operator interface.
-4. The browser opens automatically at <http://localhost:5175>.
-5. Leave the three minimized windows running while the game is in use.
+4. The browser opens in **fullscreen kiosk** at <http://127.0.0.1:5175/>.
+5. **Ctrl+Shift+K** exits fullscreen only (the game keeps running). Use
+   **`STOP_GAME.bat`** to stop the game.
+6. Leave the three minimized windows running while the game is in use.
+
+**Engineers / debug:** use `scripts\start-dev.bat` (normal browser, Vite dev
+server — not kiosk).
 
 The first start on a newly prepared computer may install frontend packages and
 take several minutes. Later starts should take only a few seconds.
@@ -87,3 +92,11 @@ Stop the game and contact technical support. Do not change COM ports or
 - Do not edit files in `games\setting`.
 - Do not unplug USB serial cables while a game is running.
 - Use `STOP_GAME.bat` at the end of operation.
+
+## Packaging / updates
+
+- Download the latest release zip from **GitHub Releases** (operators do not need git).
+- Extract the zip to a folder on the PC.
+- Double-click **`LED Climb.exe`** (or **`START_GAME.bat`** — both start the game the same way).
+- **First time on a new PC:** a technician runs **`SETUP_FIRST_TIME.bat`** once to install Python packages and frontend dependencies. The PC must already have **Python 3.11**, **Node.js LTS**, and **Chrome or Edge** installed.
+- **Updates:** stop the game with `STOP_GAME.bat`, then replace the folder with the new release zip (or drop in the new `LED Climb.exe`).

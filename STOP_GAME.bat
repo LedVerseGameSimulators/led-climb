@@ -1,14 +1,17 @@
 @echo off
 setlocal EnableExtensions
-title LED Climb Shutdown
 cd /d "%~dp0"
 
-echo.
-echo ==========================================
-echo           LED CLIMB - STOP GAME
-echo ==========================================
-echo.
-echo Ending the active game and blanking the floor...
+set "QUIET=%~1"
+if /i not "%QUIET%"=="/quiet" (
+  title LED Climb Shutdown
+  echo.
+  echo ==========================================
+  echo           LED CLIMB - STOP GAME
+  echo ==========================================
+  echo.
+  echo Ending the active game and blanking the floor...
+)
 
 REM Ask the API to stop cleanly first so the physical LEDs receive a black
 REM frame before any process is terminated.
@@ -16,13 +19,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $a=Invoke-RestMeth
 REM ping-wait works under agent shells; timeout.exe fails with redirected stdin
 ping -n 2 127.0.0.1 >nul
 
-echo Stopping floor engine, bridge, and interface...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ports=8002,8766,5175; Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ports -contains $_.LocalPort } | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+if /i not "%QUIET%"=="/quiet" (
+  echo Stopping floor engine, bridge, and interface...
+)
+
 taskkill /FI "WINDOWTITLE eq LED Climb API*" /T /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq LED Climb Bridge*" /T /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq LED Climb UI*" /T /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq Activerse Kiosk Exit*" /T /F >nul 2>&1
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\kiosk\kill-kiosk-browser.ps1" -ProfileSlug climb
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ports=8002,8766,5175; Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $ports -contains $_.LocalPort } | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+
+if /i "%QUIET%"=="/quiet" (
+  endlocal
+  exit /b 0
+)
 
 echo.
 echo LED Climb has stopped.
 ping -n 3 127.0.0.1 >nul
+endlocal
 exit /b 0

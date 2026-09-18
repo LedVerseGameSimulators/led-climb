@@ -1,6 +1,7 @@
 @echo off
 REM Start Climb dev stack (API 8002, ws_bridge 8766, UI 5175).
 setlocal
+set ACTIVERSE_KIOSK=0
 cd /d "%~dp0.."
 
 echo ==^> LED Climb dev stack from %CD%
