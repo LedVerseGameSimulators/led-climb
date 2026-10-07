@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 
 import { API_URL, WS_BRIDGE_URL } from '../config'
-import { formatLevelLabel, TOURNAMENT_LEVEL_ORDER } from '../levelPlaylists'
+import { formatLevelLabel, firstPlaylistId } from '../levelPlaylists'
 
 function countdownDisplay(state) {
   if (state?.phase !== 'countdown') return null
@@ -32,7 +32,7 @@ function HeartRow({ life, maxLife }) {
   )
 }
 
-export default function SimulatorScreen({ config, onGameEnd }) {
+export default function SimulatorScreen({ config, playlists, onGameEnd }) {
   const [gameState, setGameState] = useState(null)
   const [gameId, setGameId] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -166,11 +166,11 @@ export default function SimulatorScreen({ config, onGameEnd }) {
     // Real file stems are only used to load levels via start-game (config.level).
     const startStem =
       config.playMode === 'group' && (!config.level || config.level === 'auto')
-        ? TOURNAMENT_LEVEL_ORDER[0]
+        ? (firstPlaylistId(playlists, 'group') || '')
         : (config.level || '')
     const endStem = st.current_level ?? startStem
-    const levelLabel = formatLevelLabel(config.playMode, startStem)
-    const endLevelLabel = formatLevelLabel(config.playMode, endStem)
+    const levelLabel = formatLevelLabel(config.playMode, startStem, playlists)
+    const endLevelLabel = formatLevelLabel(config.playMode, endStem, playlists)
     // Guests (no RFID): skip save-score only. Always stop the backend game
     // so BGM / session teardown still run.
     const hasRfidCard = Boolean(config.cardId && String(config.cardId).trim())
@@ -279,7 +279,7 @@ export default function SimulatorScreen({ config, onGameEnd }) {
         <div className="card">
           <h2>Starting Game...</h2>
           <p style={{ textAlign: 'center', marginTop: '20px' }}>
-            Power Climb - Level {formatLevelLabel(config.playMode, config.level)} ({config.difficulty})
+            Power Climb - Level {formatLevelLabel(config.playMode, config.level, playlists)} ({config.difficulty})
           </p>
         </div>
       </div>
@@ -317,7 +317,7 @@ export default function SimulatorScreen({ config, onGameEnd }) {
   const p1Name = config.playerName || 'Player 1'
   const p2Name = config.playerName2 || 'Player 2'
   const currentLevelRaw = gameState?.current_level ?? config.level
-  const currentLevelLabel = formatLevelLabel(config.playMode, currentLevelRaw)
+  const currentLevelLabel = formatLevelLabel(config.playMode, currentLevelRaw, playlists)
 
   return (
     <div className="simulator-container">
@@ -366,7 +366,7 @@ export default function SimulatorScreen({ config, onGameEnd }) {
           <div className="boot-banner" aria-live="polite">
             <p className="boot-banner-title">Starting Game…</p>
             <p className="boot-banner-sub">
-              Power Climb · Level {formatLevelLabel(config.playMode, config.level)}
+              Power Climb · Level {formatLevelLabel(config.playMode, config.level, playlists)}
             </p>
           </div>
         )}

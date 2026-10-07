@@ -86,6 +86,14 @@ async def login(request: LoginRequest) -> LoginResponse:
         return LoginResponse(success=False, error=str(e))
 
 
+# ============= MODE PLAYLISTS =============
+@app.get("/playlists")
+async def get_playlists():
+    """Canonical mode playlists (same as api/mode_playlists.json)."""
+    from .game_manager import _load_mode_playlists
+    return _load_mode_playlists()
+
+
 # ============= START GAME ENDPOINT =============
 @app.post("/start-game")
 async def start_game(request: StartGameRequest) -> StartGameResponse:
