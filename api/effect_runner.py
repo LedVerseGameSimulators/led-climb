@@ -120,8 +120,7 @@ class EffectRunner:
             "level_fail": "level_fail",
         }.get(effect_name, effect_name)
 
-        if play_stinger or effect_name in ("level_clear", "level_fail"):
-            self.audio.play_stinger()
+        self._effect_stinger_sent = False
 
         if effect_name == "countdown" and self._countdown_thresholds is None:
             self._countdown_thresholds = load_effect_thresholds(path)
@@ -141,6 +140,14 @@ class EffectRunner:
         def _effect_callback(_play_self, _dgroup, _time_pass, total_pass):
             if not self.game.running:
                 return False
+            if (
+                effect_name in ("level_clear", "level_fail")
+                and total_pass < 0.05
+                and not getattr(self, "_effect_stinger_sent", False)
+            ):
+                if play_stinger or effect_name in ("level_clear", "level_fail"):
+                    self.audio.play_stinger()
+                self._effect_stinger_sent = True
             session_elapsed = time.time() - self.game.session_start
             if session_elapsed > self.game.game_time_sec:
                 self.game._session_over = True
