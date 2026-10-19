@@ -92,12 +92,20 @@ class AudioManager:
 
     def _play_stinger_locked(self, path: str) -> None:
         if self._mixer is None or not Path(path).exists():
+            logger.warning(f"Transition stinger missing: {path}")
             return
+        self._stop_bgm_locked()
         try:
-            snd = self._mixer.Sound(path)
-            snd.play()
+            self._mixer.music.load(path)
+            self._mixer.music.play(0)
         except Exception as exc:
-            logger.debug(f"Stinger failed: {exc}")
+            logger.warning(f"Transition stinger (music) failed: {exc}")
+            try:
+                ch = self._mixer.find_channel(True)
+                if ch:
+                    ch.play(self._mixer.Sound(path))
+            except Exception as exc2:
+                logger.warning(f"Transition stinger (sfx) failed: {exc2}")
 
     def _play_sfx_locked(self, path: str) -> None:
         if self._mixer is None or not Path(path).exists():
