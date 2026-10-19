@@ -24,6 +24,32 @@ USE_SERIAL_HD = os.environ.get("USE_SERIAL_HD", "0") == "1"
 _AUDIO_DISABLED = os.environ.get("CLIMB_AUDIO_DISABLED", "0") == "1"
 
 
+def _audio_file_usable(path: str) -> bool:
+    if not path or not Path(path).is_file():
+        return False
+    try:
+        with open(path, "rb") as fh:
+            if fh.read(8).startswith(b"version "):
+                logger.warning(
+                    f"Audio file is a Git LFS pointer — run git lfs pull: {path}"
+                )
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def _release_music(mixer) -> None:
+    try:
+        mixer.music.stop()
+    except Exception:
+        pass
+    try:
+        mixer.music.unload()
+    except Exception:
+        pass
+
+
 class AudioManager:
     """Enqueue playback on a daemon thread; game thread never waits on mixer."""
 
@@ -42,7 +68,7 @@ class AudioManager:
                 import pygame  # type: ignore
 
                 if not pygame.mixer.get_init():
-                    pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+                    pygame.mixer.init(frequency=22050, size=-16, channels=8, buffer=512)
                 self._mixer = pygame.mixer
                 self._enabled = True
             except Exception as exc:
@@ -71,10 +97,7 @@ class AudioManager:
         self._bgm_playing = False
         if self._mixer is None:
             return
-        try:
-            self._mixer.music.stop()
-        except Exception:
-            pass
+        _release_music(self._mixer)
 
     def _play_bgm_locked(self, path: str, epoch: Optional[int]) -> None:
         if epoch is not None and epoch != self._bgm_epoch:
@@ -91,21 +114,25 @@ class AudioManager:
             logger.debug(f"BGM load failed: {exc}")
 
     def _play_stinger_locked(self, path: str) -> None:
-        if self._mixer is None or not Path(path).exists():
-            logger.warning(f"Transition stinger missing: {path}")
-            return
         self._stop_bgm_locked()
+        if self._mixer is None or not _audio_file_usable(path):
+            logger.warning(f"Transition stinger missing or unusable: {path}")
+            return
+        try:
+            ch = self._mixer.find_channel(True)
+            if ch:
+                ch.set_volume(1.0)
+                ch.play(self._mixer.Sound(path))
+                logger.info("Transition stinger played (sfx)")
+                return
+        except Exception as exc:
+            logger.warning(f"Transition stinger (sfx) failed: {exc}")
         try:
             self._mixer.music.load(path)
-            self._mixer.music.play(0)
+            self._mixer.music.play(loops=0)
+            logger.info("Transition stinger played (music)")
         except Exception as exc:
             logger.warning(f"Transition stinger (music) failed: {exc}")
-            try:
-                ch = self._mixer.find_channel(True)
-                if ch:
-                    ch.play(self._mixer.Sound(path))
-            except Exception as exc2:
-                logger.warning(f"Transition stinger (sfx) failed: {exc2}")
 
     def _play_sfx_locked(self, path: str) -> None:
         if self._mixer is None or not Path(path).exists():
