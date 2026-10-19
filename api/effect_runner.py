@@ -146,7 +146,7 @@ class EffectRunner:
                 and not getattr(self, "_effect_stinger_sent", False)
             ):
                 if play_stinger or effect_name in ("level_clear", "level_fail"):
-                    self.audio.play_stinger()
+                    self.audio.play_stinger(phase=effect_name)
                 self._effect_stinger_sent = True
             session_elapsed = time.time() - self.game.session_start
             if session_elapsed > self.game.game_time_sec:

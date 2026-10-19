@@ -160,7 +160,11 @@ class AudioManager:
         """Idempotent BGM stop; safe on every game exit path."""
         self.stop_bgm()
 
-    def play_stinger(self, path: Optional[Path] = None) -> None:
+    def play_stinger(self, path: Optional[Path] = None, phase: Optional[str] = None) -> None:
+        if path is None and phase in ("level_clear", "level_fail"):
+            cand = TRANSITION_STINGER.parent / f"{phase}.mp3"
+            if cand.is_file():
+                path = cand
         self._enqueue("play_stinger", str(path or TRANSITION_STINGER))
 
     def play_sfx(self, path: Path) -> None:
