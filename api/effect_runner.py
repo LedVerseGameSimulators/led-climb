@@ -200,7 +200,7 @@ class EffectRunner:
         return True
 
     def enter_gameplay(self) -> None:
-        self.game.finish_level_transition()
+        """Start session BGM; input opens in finish_level_transition after level prep."""
         self.audio.play_bgm()
         self.game.update_state(bgm_active=self.audio.bgm_active)
 

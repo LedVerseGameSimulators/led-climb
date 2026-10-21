@@ -16,7 +16,7 @@ from .models import (
     GameState, GameInput, GameResult, LogoutRequest, LogoutResponse
 )
 from .database import get_db
-from .game_manager import get_manager
+from .game_manager import get_manager, validate_playlist_start
 
 # Setup logging
 logger.add("logs/api.log", rotation="500 MB", level="INFO")
@@ -120,6 +120,12 @@ async def start_game(request: StartGameRequest) -> StartGameResponse:
         level = request.level
         if mode == "group" and (level is None or str(level).strip() == ""):
             level = "auto"
+
+        try:
+            validate_playlist_start(level, mode=mode)
+        except ValueError as ve:
+            logger.warning(f"Invalid playlist start: {ve}")
+            return StartGameResponse(success=False, error=str(ve))
 
         # Create game instance
         game_id = game_manager.create_game(

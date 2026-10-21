@@ -69,13 +69,26 @@ def fast_session(monkeypatch):
 def tiny_two_level_sequence(monkeypatch):
     seq = [str(FIXTURE_LEVELS / "TINY.led"), str(FIXTURE_LEVELS / "TINY2.led")]
 
-    def _build(_start):
-        return seq
+    def _build_playlist(_mode_key, start_id):
+        if str(start_id) == "TINY":
+            return list(seq)
+        raise ValueError(f"Unexpected playlist stub start {start_id!r}")
 
-    monkeypatch.setattr("api.game_manager._build_level_sequence", _build)
+    monkeypatch.setattr("api.game_manager._build_playlist_sequence", _build_playlist)
 
 
-def _start(client: TestClient, level: str = "A001") -> str:
+def _patch_tiny_single_level(monkeypatch):
+    seq = [str(FIXTURE_LEVELS / "TINY.led")]
+
+    def _build_playlist(_mode_key, start_id):
+        if str(start_id) == "TINY":
+            return list(seq)
+        raise ValueError(f"Unexpected playlist stub start {start_id!r}")
+
+    monkeypatch.setattr("api.game_manager._build_playlist_sequence", _build_playlist)
+
+
+def _start(client: TestClient, level: str = "A005") -> str:
     resp = client.post(
         "/start-game",
         json={"card_id": "test-card", "level": level, "difficulty": "normal"},
@@ -111,6 +124,27 @@ def _wait_phase(
             break
         time.sleep(0.05)
     pytest.fail(f"Timed out waiting for phase={phase!r}, last={last.get('phase')!r}")
+
+
+def _wait_gameplay_ready(
+    client: TestClient,
+    game_id: str,
+    *,
+    timeout: float = 20.0,
+) -> dict:
+    deadline = time.time() + timeout
+    last = {}
+    while time.time() < deadline:
+        last = _state(client, game_id)
+        if last.get("phase") == "playing" and last.get("accepting_input") is True:
+            return last
+        if last.get("game_over"):
+            break
+        time.sleep(0.05)
+    pytest.fail(
+        "Timed out waiting for gameplay (playing + accepting_input), "
+        f"last phase={last.get('phase')!r} accepting_input={last.get('accepting_input')!r}"
+    )
 
 
 def _wait_any_phase(
@@ -187,7 +221,7 @@ def _force_level_end(game, *, cleared: bool = False, restart: bool = False, sess
 def test_t1_session_start_reaches_gameplay(client):
     game_id = _start(client)
     _wait_any_phase(client, game_id, ("countdown",))
-    st = _wait_phase(client, game_id, "playing")
+    st = _wait_gameplay_ready(client, game_id)
     assert st["accepting_input"] is True
 
 
@@ -260,18 +294,18 @@ def test_t2_countdown_after_mid_session_clear(client, tiny_two_level_sequence):
 def test_t3_level_fail_restart_same_level(client):
     # Must keep >10s on the clock so life=0 restarts (not session-end).
     # Do not use fast_session here — that sets game_time_sec=8 and forces the ≤10s path.
-    game_id = _start(client, level="A001")
-    _wait_phase(client, game_id, "playing")
-    _wait_current_level(client, game_id, "A001")
+    game_id = _start(client, level="A005")
+    _wait_gameplay_ready(client, game_id)
+    _wait_current_level(client, game_id, "A005")
     game = _game(game_id)
     level_before = game.current_level_id
     score_before = game.score
-    assert level_before == "A001"
+    assert level_before == "A005"
     game.life = 0
     game._restart_level = True
     _force_level_end(game, restart=True)
     _poll_phases(client, game_id, ["level_fail", "countdown", "playing"])
-    _wait_current_level(client, game_id, "A001")
+    _wait_current_level(client, game_id, "A005")
     game = _game(game_id)
     assert game.current_level_id == level_before
     assert game.score == score_before
@@ -279,8 +313,7 @@ def test_t3_level_fail_restart_same_level(client):
 
 
 def test_t4_session_end_on_timer_no_countdown(client, fast_session, monkeypatch):
-    seq = [str(FIXTURE_LEVELS / "TINY.led")]
-    monkeypatch.setattr("api.game_manager._build_level_sequence", lambda _s: seq)
+    _patch_tiny_single_level(monkeypatch)
     game_id = _start(client, level="TINY")
     _wait_phase(client, game_id, "playing")
     game = _game(game_id)
@@ -291,8 +324,7 @@ def test_t4_session_end_on_timer_no_countdown(client, fast_session, monkeypatch)
 
 
 def test_t5_session_end_life_le_10s_no_fail_panel(client, fast_session, monkeypatch):
-    seq = [str(FIXTURE_LEVELS / "TINY.led")]
-    monkeypatch.setattr("api.game_manager._build_level_sequence", lambda _s: seq)
+    _patch_tiny_single_level(monkeypatch)
     game_id = _start(client, level="TINY")
     _wait_phase(client, game_id, "playing")
     game = _game(game_id)
@@ -306,8 +338,7 @@ def test_t5_session_end_life_le_10s_no_fail_panel(client, fast_session, monkeypa
 
 
 def test_t6_last_level_cleared_session_end(client, monkeypatch, fast_session):
-    seq = [str(FIXTURE_LEVELS / "TINY.led")]
-    monkeypatch.setattr("api.game_manager._build_level_sequence", lambda _s: seq)
+    _patch_tiny_single_level(monkeypatch)
     game_id = _start(client, level="TINY")
     _wait_phase(client, game_id, "playing")
     _force_level_end(_game(game_id), cleared=True)
@@ -343,3 +374,25 @@ def test_cs2_phase_step_on_countdown_entry(client):
     assert st.get("phase") == "countdown"
     assert st.get("phase_step") is not None
     assert st.get("phase_step") == 3
+
+
+def test_start_game_rejects_unknown_playlist_id(client):
+    resp = client.post(
+        "/start-game",
+        json={"card_id": "test-card", "level": "NOT_A_LEVEL", "difficulty": "normal"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is False
+    assert data.get("error")
+
+
+def test_start_game_accepts_valid_playlist_id(client):
+    resp = client.post(
+        "/start-game",
+        json={"card_id": "test-card", "level": "A005", "difficulty": "normal"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data.get("game_id")
