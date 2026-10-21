@@ -3,10 +3,13 @@ import { useState, useRef, useEffect } from 'react'
 import VideoBackground from '../components/VideoBackground'
 import { randomGuestNames } from '../guestNames'
 import { RFID_API_URL } from '../config'
-
-function normalizeCardId(raw) {
-  return String(raw ?? '').replace(/[\r\n]/g, '').trim()
-}
+import { rfidContextFromValidate } from '../rfidContext'
+import {
+  canonicalCardId,
+  cardsEqualCaseInsensitive,
+  normalizeCardId,
+  teamBattleSecondCardError,
+} from '../loginValidation'
 
 function validationError(data) {
   if (data.reason === 'insufficient_time') {
@@ -79,8 +82,8 @@ export default function LoginScreen({ gameTitle = 'Power Climb', onLogin, player
       const other = which === 1
         ? normalizeCardId(card2Ref.current?.value || card2)
         : normalizeCardId(card1Ref.current?.value || card1)
-      if (other && cardId === other) {
-        setError('Each player needs a different card')
+      if (other && cardsEqualCaseInsensitive(cardId, other)) {
+        setError('Team Battle requires two different group leader cards')
         if (which === 1) {
           setP1Info(null)
           setValidatedCard1('')
@@ -98,13 +101,25 @@ export default function LoginScreen({ gameTitle = 'Power Climb', onLogin, player
     try {
       const data = await validateRfidCard(cardId)
       if (data.valid) {
+        const canonical = canonicalCardId(data, cardId)
+        if (which === 2 && playerCount === 2 && p1Info?.valid) {
+          const tbErr = teamBattleSecondCardError(p1Info, data)
+          if (tbErr) {
+            setP2Info(null)
+            setValidatedCard2('')
+            setError(tbErr)
+            return
+          }
+        }
         ok = true
         if (which === 1) {
           setP1Info(data)
-          setValidatedCard1(cardId)
+          setValidatedCard1(canonical)
+          setCard1(canonical)
         } else {
           setP2Info(data)
-          setValidatedCard2(cardId)
+          setValidatedCard2(canonical)
+          setCard2(canonical)
         }
       } else {
         if (which === 1) {
@@ -151,9 +166,12 @@ export default function LoginScreen({ gameTitle = 'Power Climb', onLogin, player
 
   const handleStartGame = () => {
     if (!canStart || validating) return
-    if (playerCount === 2 && validatedCard1 === validatedCard2) {
-      setError('Each player needs a different card')
-      return
+    if (playerCount === 2) {
+      const tbErr = teamBattleSecondCardError(p1Info, p2Info)
+      if (tbErr) {
+        setError(tbErr)
+        return
+      }
     }
     onLogin(
       validatedCard1,
@@ -161,7 +179,9 @@ export default function LoginScreen({ gameTitle = 'Power Climb', onLogin, player
       p1Info.player_name || '',
       p2Info?.player_name || '',
       p1Info.minutes_remaining ?? null,
-      p2Info?.minutes_remaining ?? null
+      p2Info?.minutes_remaining ?? null,
+      rfidContextFromValidate(p1Info),
+      playerCount === 2 ? rfidContextFromValidate(p2Info) : null,
     )
   }
 

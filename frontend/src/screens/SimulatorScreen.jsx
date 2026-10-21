@@ -1,6 +1,12 @@
 import { useEffect, useState, useRef } from 'react'
 
 import { API_URL, WS_BRIDGE_URL } from '../config'
+import {
+  playModeToSaveMode,
+  refreshRfidContext,
+  saveScoreRfidFields,
+} from '../rfidContext'
+import { clearResumeSnapshot, saveResumeSnapshot } from '../gameResumeStorage'
 import { formatLevelLabel, firstPlaylistId } from '../levelPlaylists'
 
 function countdownDisplay(state) {
@@ -90,6 +96,7 @@ export default function SimulatorScreen({ config, playlists, onGameEnd }) {
     if (config.resumeGameId) {
       setGameId(config.resumeGameId)
       gameIdRef.current = config.resumeGameId
+      saveResumeSnapshot(sessionStorage, config.resumeGameId, config)
       setLoading(false)
       return
     }
@@ -109,6 +116,7 @@ export default function SimulatorScreen({ config, playlists, onGameEnd }) {
         if (data.success) {
           setGameId(data.game_id)
           gameIdRef.current = data.game_id
+          saveResumeSnapshot(sessionStorage, data.game_id, config)
           setLoading(false)
         } else {
           setError(data.error || 'Failed to start game')
@@ -177,12 +185,17 @@ export default function SimulatorScreen({ config, playlists, onGameEnd }) {
 
     try {
       if (hasRfidCard) {
+        const hasCard2 = Boolean(config.cardId2 && String(config.cardId2).trim())
+        const slot1 = await refreshRfidContext(config.cardId, config.rfidContext)
+        const slot2 = hasCard2
+          ? await refreshRfidContext(config.cardId2, config.rfidContext2)
+          : null
         await fetch(`${API_URL}/save-score`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             card_id: config.cardId,
-            card_id2: config.cardId2 || null,
+            card_id2: hasCard2 ? config.cardId2 : null,
             level: levelLabel,              // FE display → Climb DB → RFID LB
             end_level: endLevelLabel,
             level_file: startStem,          // real stem (ops/debug only)
@@ -199,6 +212,8 @@ export default function SimulatorScreen({ config, playlists, onGameEnd }) {
             levels_cleared: st.levels_cleared ?? 0,
             difficulty: config.difficulty ?? '',
             started_at: st.started_at ?? '',
+            play_mode: playModeToSaveMode(config.playMode),
+            ...saveScoreRfidFields(slot1, slot2),
             player_name: config.playerName || '',
             player_name2: config.playerName2 || '',
           })
@@ -215,6 +230,7 @@ export default function SimulatorScreen({ config, playlists, onGameEnd }) {
     } catch (err) {
       console.error('Stop/save error:', err)
     }
+    if (id) clearResumeSnapshot(sessionStorage, id)
     onGameEnd({
       score: finalScore,
       score2: finalScore2,

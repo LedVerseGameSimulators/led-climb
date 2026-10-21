@@ -6,6 +6,7 @@ import SimulatorScreen from './screens/SimulatorScreen'
 import ResultScreen    from './screens/ResultScreen'
 
 import { API_URL } from './config'
+import { loadResumeSnapshot, mergeResumeSnapshot } from './gameResumeStorage'
 import VideoBackground from './components/VideoBackground'
 
 const S = {
@@ -28,6 +29,8 @@ const DEFAULT_CONFIG = {
   playerName2: '',
   minutesRemaining: null,
   minutesRemaining2: null,
+  rfidContext: null,
+  rfidContext2: null,
 }
 
 export default function App() {
@@ -49,13 +52,15 @@ export default function App() {
       .then((r) => r.json())
       .then((d) => {
         if (d.success) {
-          setGameConfig((prev) => ({
+          const resumeGameId = d.game_id
+          const snapshot = loadResumeSnapshot(sessionStorage, resumeGameId)
+          setGameConfig((prev) => mergeResumeSnapshot({
             ...prev,
             cardId: d.card_id,
             level: d.level,
             difficulty: d.difficulty,
-            resumeGameId: d.game_id,
-          }))
+            resumeGameId,
+          }, resumeGameId, snapshot))
           setScreen(S.SIMULATOR)
         }
       })
@@ -83,7 +88,9 @@ export default function App() {
     playerName = '',
     playerName2 = '',
     minutesRemaining = null,
-    minutesRemaining2 = null
+    minutesRemaining2 = null,
+    rfidContext = null,
+    rfidContext2 = null,
   ) => {
     setGameConfig((prev) => ({
       ...prev,
@@ -93,6 +100,8 @@ export default function App() {
       playerName2: playerName2 || '',
       minutesRemaining,
       minutesRemaining2,
+      rfidContext,
+      rfidContext2,
     }))
     setScreen(S.COUNTDOWN)
   }

@@ -8,6 +8,7 @@ import os
 import sqlite3
 import threading
 import datetime
+import json
 
 # Try to import db_operation from game; optional for headless testing
 DBOperation = None
@@ -20,6 +21,47 @@ except ImportError as e:
 # RFID server polls it over HTTP). Per-repo path = dev matches prod topology
 # (5 machines = 5 files), so no cross-game contamination via a shared file.
 _SCORES_DB = str(GAMES_ROOT) + "/setting/ledplaydb.sqlite"
+
+_RFID_SCORE_COLS = (
+    ("play_mode", "TEXT"),
+    ("session_id", "INTEGER"),
+    ("group_id", "INTEGER"),
+    ("roster_size_at_play", "INTEGER"),
+    ("roster_player_ids", "TEXT"),
+    ("session_id2", "INTEGER"),
+    ("group_id2", "INTEGER"),
+    ("roster_size_at_play2", "INTEGER"),
+    ("roster_player_ids2", "TEXT"),
+)
+
+
+def _optional_int(val):
+    if val is None or val == "":
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _roster_ids_to_json(val):
+    """Persist roster snapshot as JSON text; None if empty/unparseable."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        s = val.strip()
+        return s if s else None
+    if isinstance(val, (list, tuple)):
+        out = []
+        for x in val:
+            if x is None or x == "":
+                continue
+            try:
+                out.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        return json.dumps(out) if out else None
+    return None
 
 
 class Database:
@@ -72,6 +114,11 @@ class Database:
                         con.execute(f"ALTER TABLE hex_scores ADD COLUMN {col} {typ}")
                     except Exception:
                         pass
+                for col, typ in _RFID_SCORE_COLS:
+                    try:
+                        con.execute(f"ALTER TABLE hex_scores ADD COLUMN {col} {typ}")
+                    except Exception:
+                        pass
                 con.commit()
                 con.close()
         except Exception as e:
@@ -115,8 +162,10 @@ class Database:
                     "INSERT INTO hex_scores (card_id, card_id2, multiplayer, level, "
                     "end_level, level_file, end_level_file, score, score2, "
                     "final_score, final_score2, life, lives_start, result, time_used, "
-                    "levels_cleared, difficulty, started_at, ts, game) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "levels_cleared, difficulty, started_at, play_mode, session_id, "
+                    "group_id, roster_size_at_play, roster_player_ids, session_id2, "
+                    "group_id2, roster_size_at_play2, roster_player_ids2, ts, game) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         str(game_info.get("card_id", "")),
                         str(game_info.get("card_id2", "") or ""),
@@ -136,6 +185,15 @@ class Database:
                         int(game_info.get("levels_cleared", 0)),
                         str(game_info.get("difficulty", "") or ""),
                         str(game_info.get("started_at", "") or ""),
+                        game_info.get("play_mode"),
+                        _optional_int(game_info.get("session_id")),
+                        _optional_int(game_info.get("group_id")),
+                        _optional_int(game_info.get("roster_size_at_play")),
+                        _roster_ids_to_json(game_info.get("roster_player_ids")),
+                        _optional_int(game_info.get("session_id2")),
+                        _optional_int(game_info.get("group_id2")),
+                        _optional_int(game_info.get("roster_size_at_play2")),
+                        _roster_ids_to_json(game_info.get("roster_player_ids2")),
                         datetime.datetime.now().isoformat(timespec="seconds"),
                         GAME_NAME,
                     ),
@@ -202,7 +260,7 @@ class Database:
             return []
 
     def get_scores_since(self, since: str):
-        """Return scores recorded after `since` timestamp. Used by RFID poller."""
+        """Return scores at or after `since` timestamp. Used by RFID poller."""
         try:
             with self._scores_lock:
                 con = self._scores_conn()
@@ -210,8 +268,11 @@ class Database:
                     "SELECT card_id, card_id2, multiplayer, level, end_level, "
                     "level_file, end_level_file, "
                     "score, score2, final_score, final_score2, life, lives_start, "
-                    "result, time_used, levels_cleared, difficulty, started_at, ts, game "
-                    "FROM hex_scores WHERE ts > ? AND game = ? ORDER BY ts ASC",
+                    "result, time_used, levels_cleared, difficulty, started_at, "
+                    "play_mode, session_id, group_id, roster_size_at_play, "
+                    "roster_player_ids, session_id2, group_id2, roster_size_at_play2, "
+                    "roster_player_ids2, ts, game "
+                    "FROM hex_scores WHERE ts >= ? AND game = ? ORDER BY ts ASC",
                     (since, GAME_NAME),
                 ).fetchall()
                 con.close()
@@ -220,7 +281,10 @@ class Database:
                  "level_file", "end_level_file",
                  "score", "score2", "final_score", "final_score2", "life",
                  "lives_start", "result", "time_used", "levels_cleared",
-                 "difficulty", "started_at", "ts", "game"], r
+                 "difficulty", "started_at", "play_mode", "session_id", "group_id",
+                 "roster_size_at_play", "roster_player_ids", "session_id2",
+                 "group_id2", "roster_size_at_play2", "roster_player_ids2",
+                 "ts", "game"], r
             )) for r in rows]
         except Exception as e:
             logger.error(f"Error getting scores since {since}: {e}")
