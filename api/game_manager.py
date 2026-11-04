@@ -426,8 +426,8 @@ _MODE_PLAYLISTS_CACHE = None
 
 
 def _mode_playlists_json_path():
-    from pathlib import Path
-    return Path(__file__).resolve().parent / "mode_playlists.json"
+    from .runtime_paths import install_root
+    return install_root() / "api" / "mode_playlists.json"
 
 
 def _load_mode_playlists():
@@ -451,12 +451,11 @@ def _mode_playlists_active():
 
 
 def _resolve_playlist_entry_path(mode_key: str, entry: dict) -> str:
-    from pathlib import Path
+    from .runtime_paths import install_root
     rel = entry.get("path")
     if not rel:
         raise ValueError(f"Playlist entry missing path (id={entry.get('id')})")
-    root = Path(__file__).resolve().parent.parent
-    full = (root / rel).resolve()
+    full = (install_root() / rel).resolve()
     return str(full)
 
 

@@ -5,11 +5,14 @@ import os
 import sys
 from pathlib import Path
 
+from .runtime_paths import games_root, install_root
+
 # GAMES_ROOT: path to the game source directory.
 # Default = ../games/ relative to this repo (works from activerse_final_changes/led-hexagon/).
 # Override with GAMES_ROOT env var if running from a different location.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-GAMES_ROOT = Path(os.getenv("GAMES_ROOT", str(_REPO_ROOT / "games")))
+# Default via runtime_paths (repo games/ in dev; install_root()/games when frozen).
+_REPO_ROOT = install_root()
+GAMES_ROOT = games_root()
 
 # Game Configuration
 GAME_NAME = "climb"
@@ -48,7 +51,7 @@ DB_NAME = os.getenv("DB_NAME", "ledplaydb")
 
 # API Configuration
 API_HOST = "0.0.0.0"
-API_PORT = int(os.getenv("API_PORT", 8001))
+API_PORT = int(os.getenv("API_PORT", 8002))  # = frontend/src/config.js
 API_DEBUG = os.getenv("API_DEBUG", "False").lower() == "true"
 
 # Game Configuration
